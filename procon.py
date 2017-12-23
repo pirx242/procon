@@ -132,7 +132,7 @@ for pid in PIDS:
 					vl = VALS[i]
 					#print vr, vl
 					
-					if vr in ['exe', 'cmdline'] and vl.endswith('$'):
+					if vr in ['exe', 'cmdline'] and vl.endswith('>'):
 						vl = vl[:-1]
 						if not LOCALS[vr].startswith(vl):
 							proc_is_whitelisted = False
@@ -166,7 +166,7 @@ for pid in PIDS:
 				vr = 'OPEN FILES'
 				vl = None
 
-				# if some whitelisting row whitelisted the process by matching variables, lets check network connections
+				# if this whitelisting row whitelisted the process by matching variables, lets check network connections
 				if proc_is_whitelisted:
 					pid_fd_dir = os.path.join(pid_dir, 'fd') + os.sep
 
