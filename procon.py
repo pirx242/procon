@@ -186,7 +186,7 @@ for pid in PIDS:
 								break
 							pass
 						elif of.startswith('/etc'):
-							alert(2, 'process has open file in /etc', LOCALS)
+							alert(2, 'process has open file in /etc, of=%s' % (of), LOCALS)
 						else:
 							pass
 
