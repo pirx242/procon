@@ -173,7 +173,7 @@ for pid in PIDS:
 					proc_net_tcp = [ line.split() for line in open('/proc/net/tcp').readlines() ]
 					proc_net_tcp_map = {}
 					for line in proc_net_tcp:
-						proc_net_tcp_map[line[10]] = line
+						proc_net_tcp_map[line[9]] = line
 
 					for ofd in os.listdir(pid_fd_dir):
 						of = os.readlink(pid_fd_dir + ofd)
