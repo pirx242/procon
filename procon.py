@@ -3,6 +3,8 @@
 import os, pwd, time, sys
 from optparse import OptionParser
 
+IPv4_LOCALHOST = '0100007F'
+
 parser = OptionParser()
 parser.add_option('-p', action='append', type=str, dest='proc_file', default=[], help = 'conf file with process whitelisting (can be repeated)')
 parser.add_option('-a', action='store', type=int, dest='bin_age', default=[], help = 'min age of running binaries (hours)')
@@ -41,10 +43,12 @@ def alert(severity, alert_string, variables):
 
 	print '%s(%s) uid:%s user:%s pid:%s exe:%s comm:%s cmdline:%s' % (SEV, alert_string, variables['uid'], variables['user'], variables['pid'], variables['exe'], variables['comm'], variables['cmdline'])
 
-def resolve_socket(inode, proc_net_tcp_map):
-	return proc_net_tcp_map[inode]
-
-
+def hexip4_to_ip4(hex_ip):
+	r = str(int(hex_ip[6:8], 16))
+	r += '.' + str(int(hex_ip[4:6], 16))
+	r += '.' + str(int(hex_ip[2:4], 16))
+	r += '.' + str(int(hex_ip[0:2], 16))
+	return r
 
 now_epoch = time.time()
 
@@ -58,6 +62,19 @@ ME = []	#TODO RM
 # fetch all running process PIDs, as strings
 PIDS = [pid for pid in os.listdir('/proc') if pid.isdigit() and pid not in ME]
 
+PROC_NET_TCP4 = [ line.split() for line in open('/proc/net/tcp').readlines() if line.strip()[:2] != 'sl']
+PROC_NET_TCP4_MAP = {}
+for parts in PROC_NET_TCP4:
+	PROC_NET_TCP4_MAP[parts[9]] = parts
+#LISTENING_TCP4_SOCKETS = [ [int(parts[1][9:], 16), hexip4_to_ip4(parts[1][:8])] for parts in PROC_NET_TCP4 if parts[3] == '0A']
+LISTENING_NONLOCALHOST_TCP4_SOCKETS = [ int(parts[1][9:], 16) for parts in PROC_NET_TCP4 if parts[3] == '0A' and parts[1][:8] != IPv4_LOCALHOST]
+
+#PROC_NET_TCP6 = [ line.split() for line in open('/proc/net/tcp6').readlines() if line.strip()[:2] != 'sl']
+#PROC_NET_TCP6_MAP = {}
+#for line in PROC_NET_TCP4:
+#	PROC_NET_TCP6_MAP[line[9]] = line
+#LISTENING_TCP6_SOCKETS = [ int(parts[1][33:], 16) for parts in PROC_NET_TCP6 if parts[3] == '0A']
+#print LISTENING_TCP6_SOCKETS
 
 for pid in PIDS:
 	try:
@@ -166,14 +183,9 @@ for pid in PIDS:
 				vr = 'OPEN FILES'
 				vl = None
 
-				# if this whitelisting row whitelisted the process by matching variables, lets check network connections
+				# if this whitelisting row whitelisted the process by matching variables, lets check any network connections
 				if proc_is_whitelisted:
 					pid_fd_dir = os.path.join(pid_dir, 'fd') + os.sep
-
-					proc_net_tcp = [ line.split() for line in open('/proc/net/tcp').readlines() ]
-					proc_net_tcp_map = {}
-					for line in proc_net_tcp:
-						proc_net_tcp_map[line[9]] = line
 
 					for ofd in os.listdir(pid_fd_dir):
 						of = os.readlink(pid_fd_dir + ofd)
@@ -181,9 +193,29 @@ for pid in PIDS:
 							pass
 						elif of.startswith('socket:'):
 							inode = of.split('[')[1][:-1]
-							if inode in proc_net_tcp_map.keys():
-								print resolve_socket(inode, proc_net_tcp_map)
-								break
+							if inode in PROC_NET_TCP4_MAP:
+								parts = PROC_NET_TCP4_MAP[inode]
+
+								local = parts[1]
+								remote = parts[2]
+								state = parts[3]
+								local_port_decimal = int(local[9:], 16)
+								local_ip4 = local[:8]
+								remote_ip4 = remote[:8]
+								if state == '0A':
+									if local_ip4 == IPv4_LOCALHOST:
+										break
+									elif 'NET_LISTEN_'+str(local_port_decimal) in EXTRA:
+										break
+									else:
+										alert(1, 'process listens on non-localhost port %i' % (local_port_decimal), LOCALS)
+								elif state == '01':
+									if remote_ip4 == IPv4_LOCALHOST:
+										break
+									elif 'NET_CON' in EXTRA:
+										break
+									else:
+										alert(1, 'process has connection to remote IP %s' % (hexip4_to_ip4(remote_ip4)), LOCALS)
 							pass
 						elif of.startswith('/etc'):
 							alert(2, 'process has open file in /etc, of=%s' % (of), LOCALS)
