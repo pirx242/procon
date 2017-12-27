@@ -228,21 +228,21 @@ for pid in PIDS:
 									elif 'NET_LISTEN_'+str(local_port_decimal) in EXTRA:
 										break
 									else:
-										alert(1, 'process listens on non-localhost port %i' % (local_port_decimal), LOCALS)
+										alert(1, 'process %s listens on non-localhost port %i' % (comm, local_port_decimal), LOCALS)
 								elif state == '01':
 									if remote_ip4 == IPv4_LOCALHOST:
 										break
 									elif 'NET_CON' in EXTRA:
 										break
 									else:
-										alert(1, 'process has an active connection to remote IP:port %s:%i' % (hexip4_to_ip4(remote_ip4), remote_port_decimal), LOCALS)
+										alert(1, 'process %s has an active connection to remote IP:port %s:%i' % (comm, hexip4_to_ip4(remote_ip4), remote_port_decimal), LOCALS)
 								else:
 									if remote_ip4 == IPv4_LOCALHOST:
 										break
 									elif 'NET_CON' in EXTRA:
 										break
 									else:
-										alert(1, 'process has a connection to remote IP:port %s:%i in state %s' % (hexip4_to_ip4(remote_ip4), remote_port_decimal, state), LOCALS)
+										alert(1, 'process %s has a connection to remote IP:port %s:%i in state %s' % (comm, hexip4_to_ip4(remote_ip4), remote_port_decimal, state), LOCALS)
 						elif of.startswith('/etc'):
 							alert(2, 'process has open file in /etc, of=%s' % (of), LOCALS)
 						else:
