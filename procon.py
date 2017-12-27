@@ -126,6 +126,10 @@ for pid in PIDS:
 
 		print '\nPID: ', pid, uid, user, exe, comm, cmdline
 
+		if ' (deleted)' in exe:
+			alert(1, 'deleted file running', LOCALS)
+			exe = exe[:-10]
+
 		# executable files age (since last modified)
 		exe_age_hours = (now_epoch - os.stat(exe).st_mtime) / 3600
 
@@ -133,10 +137,6 @@ for pid in PIDS:
 
 		if 'clamscan' in exe:
 			alert(2, 'clamscan running', LOCALS)
-
-		if ' (deleted)' in exe:
-			alert(1, 'deleted file running', LOCALS)
-
 
 		proc_is_whitelisted = False
 		for whitelist in PROC_WHITELIST:
@@ -158,7 +158,6 @@ for pid in PIDS:
 							proc_is_whitelisted = False
 							break
 					elif vr == 'pid':
-						#print 'check pid', pid, vr, vl
 						if vl[0] == '<':
 							if int(pid) < int(vl[1:]):
 								pass
@@ -173,6 +172,23 @@ for pid in PIDS:
 								break
 						else:
 							if int(vl) != int(pid):
+								proc_is_whitelisted = False
+								break
+					elif vr == 'uid':
+						if vl[0] == '<':
+							if int(uid) < int(vl[1:]):
+								pass
+							else:
+								proc_is_whitelisted = False
+								break
+						elif vl[0] == '>':
+							if int(uid) > int(vl[1:]):
+								pass
+							else:
+								proc_is_whitelisted = False
+								break
+						else:
+							if int(vl) != int(uid):
 								proc_is_whitelisted = False
 								break
 					else:
