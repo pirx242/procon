@@ -29,6 +29,9 @@ for line in proc_whitelist_raw:
 	VARS = tmp[0].lower().split('_')
 	nr_vars = len(VARS)
 	VALS = tmp[1:nr_vars+1]
+	if len(VALS) < nr_vars:
+		print 'Skipping broken cfg line:', line
+		continue
 	EXTRA = tmp[nr_vars+1:]
 	PROC_WHITELIST.append([VARS, VALS, EXTRA])
 
