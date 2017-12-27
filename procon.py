@@ -219,6 +219,7 @@ for pid in PIDS:
 								remote = parts[2]
 								state = parts[3]
 								local_port_decimal = int(local[9:], 16)
+								remote_port_decimal = int(remote[9:], 16)
 								local_ip4 = local[:8]
 								remote_ip4 = remote[:8]
 								if state == '0A':
@@ -234,8 +235,14 @@ for pid in PIDS:
 									elif 'NET_CON' in EXTRA:
 										break
 									else:
-										alert(1, 'process has connection to remote IP %s' % (hexip4_to_ip4(remote_ip4)), LOCALS)
-							pass
+										alert(1, 'process has an active connection to remote IP:port %s:%i' % (hexip4_to_ip4(remote_ip4), remote_port_decimal), LOCALS)
+								else:
+									if remote_ip4 == IPv4_LOCALHOST:
+										break
+									elif 'NET_CON' in EXTRA:
+										break
+									else:
+										alert(1, 'process has a connection to remote IP:port %s:%i in state %s' % (hexip4_to_ip4(remote_ip4), remote_port_decimal, state), LOCALS)
 						elif of.startswith('/etc'):
 							alert(2, 'process has open file in /etc, of=%s' % (of), LOCALS)
 						else:
