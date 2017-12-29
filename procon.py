@@ -17,6 +17,16 @@ proc_whitelist_raw = []
 for f in opts.proc_file:
 	proc_whitelist_raw = proc_whitelist_raw + [ line.strip() for line in open(f).readlines() if line.strip() and not line.strip().startswith('#') ]
 
+def alert(severity, alert_string, variables):
+	if severity == 1:
+		SEV = 'CRITICAL'
+	elif severity == 2:
+		SEV = 'WARNING'
+	else:
+		SEV = 'WHAT'
+
+	print '%s(%s) uid:%s user:%s pid:%s exe:%s comm:%s cmdline:%s' % (SEV, alert_string, variables['uid'], variables['user'], variables['pid'], variables['exe'], variables['comm'], variables['cmdline'])
+
 # parse conf into whitelisting array
 PROC_WHITELIST = []
 for line in proc_whitelist_raw:
@@ -27,19 +37,12 @@ for line in proc_whitelist_raw:
 	VARS = tmp[0].lower().split('_')
 	nr_vars = len(VARS)
 	VALS = tmp[1:nr_vars+1]
-	EXTRA = tmp[nr_vars+1:]
-	PROC_WHITELIST.append([VARS, VALS, EXTRA])
-
-
-def alert(severity, alert_string, variables):
-	if severity == 1:
-		SEV = 'CRITICAL'
-	elif severity == 2:
-		SEV = 'WARNING'
+	if len(VALS) != nr_vars:
+		alert(2, 'skipping invalid cfg line: %s' % (line), {'uid':None, 'user':None, 'pid':None, 'exe':None, 'comm':None, 'cmdline':None})
 	else:
-		SEV = 'WHAT'
+		EXTRA = tmp[nr_vars+1:]
+		PROC_WHITELIST.append([VARS, VALS, EXTRA])
 
-	print '%s(%s) uid:%s user:%s pid:%s exe:%s comm:%s cmdline:%s' % (SEV, alert_string, variables['uid'], variables['user'], variables['pid'], variables['exe'], variables['comm'], variables['cmdline'])
 
 def resolve_socket(inode, proc_net_tcp_map):
 	return proc_net_tcp_map[inode]
