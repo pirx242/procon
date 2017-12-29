@@ -32,9 +32,21 @@ for line in proc_whitelist_raw:
 	if len(VALS) < nr_vars:
 		print 'Skipping broken cfg line:', line
 		continue
-	EXTRA = tmp[nr_vars+1:]
-	PROC_WHITELIST.append([VARS, VALS, EXTRA])
+	EXTRAS_DICT = {}
+	EXTRAS = tmp[nr_vars+1:]
+	for extra in EXTRAS:
+		var, val = extra.split('=')
+		if var in EXTRAS_DICT.keys():
+			EXTRAS_DICT[var].append(val.split(':'))
+		else:
+			EXTRAS_DICT[var] = [val.split(':')]
+	PROC_WHITELIST.append([VARS, VALS, EXTRAS_DICT])
 
+#print PROC_WHITELIST
+for pwl in PROC_WHITELIST:
+	if pwl[1][1] in ['/opt/google/chrome/chrome', '/usr/sbin/sshd', '/lib/systemd/systemd-resolved']:
+		print pwl
+#sys.exit(2)
 
 def alert(severity, alert_string, variables):
 	if severity == 1:
@@ -44,7 +56,10 @@ def alert(severity, alert_string, variables):
 	else:
 		SEV = 'WHAT'
 
-	print '%s(%s) uid:%s user:%s pid:%s exe:%s comm:%s cmdline:%s' % (SEV, alert_string, variables['uid'], variables['user'], variables['pid'], variables['exe'], variables['comm'], variables['cmdline'])
+	try:
+		print '%s(%s) uid:%s user:%s pid:%s exe:%s comm:%s cmdline:%s runtime:%.2fh exeage:%.2fh' % (SEV, alert_string, variables['uid'], variables['user'], variables['pid'], variables['exe'], variables['comm'], variables['cmdline'], variables['runtime'], variables['exeage'])
+	except:
+		print '%s(%s) %s' % (SEV, alert_string, variables)
 
 def hexip4_to_ip4(hex_ip):
 	r = str(int(hex_ip[6:8], 16))
@@ -79,190 +94,202 @@ LISTENING_NONLOCALHOST_TCP4_SOCKETS = [ int(parts[1][9:], 16) for parts in PROC_
 #LISTENING_TCP6_SOCKETS = [ int(parts[1][33:], 16) for parts in PROC_NET_TCP6 if parts[3] == '0A']
 #print LISTENING_TCP6_SOCKETS
 
+def check_process(pid):
+	# procs proc dir
+	pid_dir = os.path.join('/proc', pid) + os.sep
+
+	# procs UID
+	uid = None
+	try:
+		uid = str(os.stat(pid_dir).st_uid)
+	except OSError, e:
+		alert(42, e, locals())
+		return False
+
+	# procs user name
+	user = None
+	try:
+		user = pwd.getpwuid(int(uid)).pw_name
+	except KeyError:
+		user = '<None>'
+		alert(1, 'no matching user for uid%s (pid=%s)' % (uid, pid), locals())
+
+	# procs command line
+	cmdline = None
+	cmdline = open(pid_dir + 'cmdline').read()
+	cmdline = cmdline.replace(' ', '')
+	cmdline = cmdline.replace(chr(0), '').strip()[:80]
+
+	runtime = (now_epoch - os.stat(pid_dir + 'cmdline').st_mtime) / 3600.0
+
+	# procs command name
+	comm = None
+	comm = open(pid_dir + 'comm').read().strip()
+
+	# procs exe file
+	exe = None
+	exeage = 0.0
+	try:
+		exe = os.readlink(pid_dir + 'exe')
+		if ' (deleted)' in exe:
+			exeage = (now_epoch - os.stat(exe[:-10]).st_mtime) / 3600.0
+			alert(1, 'deleted file running', locals())
+			exe = exe[:-10]
+		else:
+			# executable files age (since last modified)
+			exeage = (now_epoch - os.stat(exe).st_mtime) / 3600.0
+	except OSError:
+		if uid == '0':
+			#kernel process
+			return True
+		else:
+			alert(1, 'proc with no exe and not running as root', locals())
+			return False
+
+	LOCALS = locals()
+
+	print '\nPID: ', pid, uid, user, exe, comm, cmdline
+
+
+	if 'clamscan' in exe:
+		alert(2, 'clamscan running', LOCALS)
+
+	proc_is_whitelisted = False
+	for whitelist in PROC_WHITELIST:
+		#print whitelist
+		try:
+			VARS = whitelist[0]
+			VALS = whitelist[1]
+			EXTRAS_DICT = whitelist[2]
+
+			proc_is_whitelisted = True
+			for i in range(len(VARS)):
+				vr = VARS[i]
+				vl = VALS[i]
+				#print vr, vl
+				
+				if vr in ['exe', 'cmdline'] and vl.endswith('>'):
+					vl = vl[:-1]
+					if not LOCALS[vr].startswith(vl):
+						proc_is_whitelisted = False
+						break
+				elif vr == 'pid':
+					if vl[0] == '<':
+						if int(pid) < int(vl[1:]):
+							pass
+						else:
+							proc_is_whitelisted = False
+							break
+					elif vl[0] == '>':
+						if int(pid) > int(vl[1:]):
+							pass
+						else:
+							proc_is_whitelisted = False
+							break
+					else:
+						if int(vl) != int(pid):
+							proc_is_whitelisted = False
+							break
+				elif vr == 'uid':
+					if vl[0] == '<':
+						if int(uid) < int(vl[1:]):
+							pass
+						else:
+							proc_is_whitelisted = False
+							break
+					elif vl[0] == '>':
+						if int(uid) > int(vl[1:]):
+							pass
+						else:
+							proc_is_whitelisted = False
+							break
+					else:
+						if int(vl) != int(uid):
+							proc_is_whitelisted = False
+							break
+				else:
+					#print 'check', vr, vl, LOCALS[vr]
+					if LOCALS[vr] != vl:
+						proc_is_whitelisted = False
+						#print 'break'
+						break
+					#print 'ok'
+
+			vr = 'OPEN FILES'
+			vl = None
+
+			# if this whitelisting row whitelisted the process by matching variables, lets check any network connections
+			if proc_is_whitelisted:
+				pid_fd_dir = os.path.join(pid_dir, 'fd') + os.sep
+
+				for ofd in os.listdir(pid_fd_dir):
+					of = os.readlink(pid_fd_dir + ofd)
+					if of == '/dev/null':
+						pass
+					elif of.startswith('socket:'):
+						inode = of.split('[')[1][:-1]
+						if inode in PROC_NET_TCP4_MAP:
+							parts = PROC_NET_TCP4_MAP[inode]
+
+							local = parts[1]
+							remote = parts[2]
+							state = parts[3]
+							local_port_decimal = int(local[9:], 16)
+							remote_port_decimal = int(remote[9:], 16)
+							local_ip4 = local[:8]
+							remote_ip4 = remote[:8]
+
+							if state == '0A':
+								if local_ip4 == IPv4_LOCALHOST:
+									break
+								elif 'NET_LISTEN' in EXTRAS_DICT.keys():
+									ok = False
+									for ip, port in EXTRAS_DICT['NET_LISTEN']:
+										if port == str(local_port_decimal):
+											ok = True
+											break
+
+								if not ok:
+									alert(1, 'process %s listens on non-localhost port %i' % (comm, local_port_decimal), LOCALS)
+
+							elif state == '01':
+								if remote_ip4 == IPv4_LOCALHOST:
+									break
+								elif 'NET_CON' in EXTRA:
+									break
+								alert(1, 'process %s has an active connection to remote IP:port %s:%i' % (comm, hexip4_to_ip4(remote_ip4), remote_port_decimal), LOCALS)
+
+							else:
+								if remote_ip4 == IPv4_LOCALHOST:
+									break
+								elif 'NET_CON' in EXTRA:
+									break
+								alert(1, 'process %s has a connection to remote IP:port %s:%i in state %s' % (comm, hexip4_to_ip4(remote_ip4), remote_port_decimal, state), LOCALS)
+
+					elif of.startswith('/etc'):
+						alert(2, 'process has open file in /etc, of=%s' % (of), LOCALS)
+					else:
+						pass
+
+			if proc_is_whitelisted:
+				break
+		except IOError:
+			pass
+		#except Exception, e:
+			#errstr = 'Problem with %s=%s in whitelisting line %s' %(vr, vl, whitelist)
+			#raise Exception(errstr)
+
+	if proc_is_whitelisted:
+		return True
+	else:
+		alert(42, 'ok?', LOCALS)
+		return False
+
 for pid in PIDS:
 	try:
-		CRITICALS = []
-		WARNINGS = []
-
-		# procs proc dir
-		pid_dir = os.path.join('/proc', pid) + os.sep
-
-		# procs UID
-		uid = None
-		try:
-			uid = str(os.stat(pid_dir).st_uid)
-		except OSError, e:
-			print e
-			continue
-
-		# procs user name
-		user = None
-		try:
-			user = pwd.getpwuid(int(uid)).pw_name
-		except KeyError:
-			user = None
-			CRITICALS.append('no matching user for uid %s' % (uid))
-
-		# procs command name
-		comm = None
-		comm = open(pid_dir + 'comm').read().strip()
-
-		# procs exe file
-		exe = None
-		try:
-			exe = os.readlink(pid_dir + 'exe')
-		except OSError:
-			if uid == '0':
-				#system process
-				continue
-			print 'proc with no exe and not running as root', pid, uid, user, comm
-			raise OSError()
-
-		# procs command line
-		cmdline = None
-		cmdline = open(pid_dir + 'cmdline').read()
-		cmdline = cmdline.replace(' ', '')
-		cmdline = cmdline.replace(chr(0), '').strip()[:80]
-
-		print '\nPID: ', pid, uid, user, exe, comm, cmdline
-
-		if ' (deleted)' in exe:
-			alert(1, 'deleted file running', LOCALS)
-			exe = exe[:-10]
-
-		# executable files age (since last modified)
-		exe_age_hours = (now_epoch - os.stat(exe).st_mtime) / 3600
-
-		LOCALS = locals()
-
-		if 'clamscan' in exe:
-			alert(2, 'clamscan running', LOCALS)
-
-		proc_is_whitelisted = False
-		for whitelist in PROC_WHITELIST:
-			#print whitelist
-			try:
-				VARS = whitelist[0]
-				VALS = whitelist[1]
-				EXTRA = whitelist[2]
-
-				proc_is_whitelisted = True
-				for i in range(len(VARS)):
-					vr = VARS[i]
-					vl = VALS[i]
-					#print vr, vl
-					
-					if vr in ['exe', 'cmdline'] and vl.endswith('>'):
-						vl = vl[:-1]
-						if not LOCALS[vr].startswith(vl):
-							proc_is_whitelisted = False
-							break
-					elif vr == 'pid':
-						if vl[0] == '<':
-							if int(pid) < int(vl[1:]):
-								pass
-							else:
-								proc_is_whitelisted = False
-								break
-						elif vl[0] == '>':
-							if int(pid) > int(vl[1:]):
-								pass
-							else:
-								proc_is_whitelisted = False
-								break
-						else:
-							if int(vl) != int(pid):
-								proc_is_whitelisted = False
-								break
-					elif vr == 'uid':
-						if vl[0] == '<':
-							if int(uid) < int(vl[1:]):
-								pass
-							else:
-								proc_is_whitelisted = False
-								break
-						elif vl[0] == '>':
-							if int(uid) > int(vl[1:]):
-								pass
-							else:
-								proc_is_whitelisted = False
-								break
-						else:
-							if int(vl) != int(uid):
-								proc_is_whitelisted = False
-								break
-					else:
-						#print 'check', vr, vl, LOCALS[vr]
-						if LOCALS[vr] != vl:
-							proc_is_whitelisted = False
-							#print 'break'
-							break
-						#print 'ok'
-
-				vr = 'OPEN FILES'
-				vl = None
-
-				# if this whitelisting row whitelisted the process by matching variables, lets check any network connections
-				if proc_is_whitelisted:
-					pid_fd_dir = os.path.join(pid_dir, 'fd') + os.sep
-
-					for ofd in os.listdir(pid_fd_dir):
-						of = os.readlink(pid_fd_dir + ofd)
-						if of == '/dev/null':
-							pass
-						elif of.startswith('socket:'):
-							inode = of.split('[')[1][:-1]
-							if inode in PROC_NET_TCP4_MAP:
-								parts = PROC_NET_TCP4_MAP[inode]
-
-								local = parts[1]
-								remote = parts[2]
-								state = parts[3]
-								local_port_decimal = int(local[9:], 16)
-								remote_port_decimal = int(remote[9:], 16)
-								local_ip4 = local[:8]
-								remote_ip4 = remote[:8]
-								if state == '0A':
-									if local_ip4 == IPv4_LOCALHOST:
-										break
-									elif 'NET_LISTEN_'+str(local_port_decimal) in EXTRA:
-										break
-									else:
-										alert(1, 'process %s listens on non-localhost port %i' % (comm, local_port_decimal), LOCALS)
-								elif state == '01':
-									if remote_ip4 == IPv4_LOCALHOST:
-										break
-									elif 'NET_CON' in EXTRA:
-										break
-									else:
-										alert(1, 'process %s has an active connection to remote IP:port %s:%i' % (comm, hexip4_to_ip4(remote_ip4), remote_port_decimal), LOCALS)
-								else:
-									if remote_ip4 == IPv4_LOCALHOST:
-										break
-									elif 'NET_CON' in EXTRA:
-										break
-									else:
-										alert(1, 'process %s has a connection to remote IP:port %s:%i in state %s' % (comm, hexip4_to_ip4(remote_ip4), remote_port_decimal, state), LOCALS)
-						elif of.startswith('/etc'):
-							alert(2, 'process has open file in /etc, of=%s' % (of), LOCALS)
-						else:
-							pass
-
-				if proc_is_whitelisted:
-					break
-			except IOError:
-				pass
-#			except Exception, e:
-#				errstr = 'Problem with %s=%s in whitelisting line %s' %(vr, vl, whitelist)
-#				raise Exception(errstr)
-
-		if proc_is_whitelisted:
-			pass
-		else:
-			alert(42, 'ok?', LOCALS)
+		is_ok = check_process(pid)
+		if not is_ok:
 			break
-
-		#print pid, open(os.path.join('/proc', pid, 'cmdline'), 'rb').read()
 	except IOError: # proc has already terminated
 		continue
 	except Exception, e:
