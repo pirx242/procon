@@ -84,6 +84,24 @@ for parts in PROC_NET_TCP4:
 #LISTENING_TCP4_SOCKETS = [ [int(parts[1][9:], 16), hexip4_to_ip4(parts[1][:8])] for parts in PROC_NET_TCP4 if parts[3] == '0A']
 LISTENING_NONLOCALHOST_TCP4_SOCKETS = [ int(parts[1][9:], 16) for parts in PROC_NET_TCP4 if parts[3] == '0A' and parts[1][:8] != IPv4_LOCALHOST]
 
+ALL_LISTENING_PORTS = []
+for parts in PROC_NET_TCP4:
+	local = parts[1]
+	state = parts[3]
+	local_port_decimal = int(local[9:], 16)
+	#remote_port_decimal = int(remote[9:], 16)
+	local_ip4 = local[:8]
+	#remote_ip4 = remote[:8]
+
+	if state != "0A":
+		continue
+
+	if local_ip4 == IPv4_LOCALHOST:
+		continue
+
+	ALL_LISTENING_PORTS.append(local_port_decimal)
+
+
 #PROC_NET_TCP6 = [ line.split() for line in open('/proc/net/tcp6').readlines() if line.strip()[:2] != 'sl']
 #PROC_NET_TCP6_MAP = {}
 #for line in PROC_NET_TCP4:
