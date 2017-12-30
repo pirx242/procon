@@ -254,14 +254,14 @@ def check_process(pid):
 									break
 								elif 'NET_CON' in EXTRA:
 									break
-								alert(1, 'process %s has an active connection to remote IP:port %s:%i' % (comm, hexip4_to_ip4(remote_ip4), remote_port_decimal), LOCALS)
+								alert(1, 'process %s has an active connection between local IP:port %s:%i and remote IP:port %s:%i' % (comm, hexip4_to_ip4(local_ip4), local_port_decimal, hexip4_to_ip4(remote_ip4), remote_port_decimal), LOCALS)
 
 							else:
 								if remote_ip4 == IPv4_LOCALHOST:
 									break
 								elif 'NET_CON' in EXTRA:
 									break
-								alert(1, 'process %s has a connection between local %s:%i and remote IP:port %s:%i in state %s' % (comm, hexip4_to_ip4(local_ip4), local_port_decimal hexip4_to_ip4(remote_ip4), remote_port_decimal, state), LOCALS)
+								alert(1, 'process %s has a connection between local IP:port %s:%i and remote IP:port %s:%i in state %s' % (comm, hexip4_to_ip4(local_ip4), local_port_decimal, hexip4_to_ip4(remote_ip4), remote_port_decimal, state), LOCALS)
 
 					elif of.startswith('/etc'):
 						alert(2, 'process has open file in /etc, of=%s' % (of), LOCALS)
