@@ -30,7 +30,10 @@ def alert(severity, alert_string, variables):
 	try:
 		print '%s(%s) uid:%s user:%s pid:%s exe:%s comm:%s cmdline:%s runtime:%.2fh exeage:%.2fh' % (SEV, alert_string, variables['uid'], variables['user'], variables['pid'], variables['exe'], variables['comm'], variables['cmdline'], variables['runtime'], variables['exeage'])
 	except:
-		print '%s(%s) %s' % (SEV, alert_string, variables)
+		if variables:
+			print '%s(%s) %s' % (SEV, alert_string, variables)
+		else:
+			print '%s(%s)' % (SEV, alert_string)
 
 # parse conf into whitelisting array
 PROC_WHITELIST = []
@@ -88,10 +91,8 @@ ALL_LISTENING_PORTS = []
 for parts in PROC_NET_TCP4:
 	local = parts[1]
 	state = parts[3]
-	local_port_decimal = int(local[9:], 16)
-	#remote_port_decimal = int(remote[9:], 16)
+	local_port = str(int(local[9:], 16))
 	local_ip4 = local[:8]
-	#remote_ip4 = remote[:8]
 
 	if state != "0A":
 		continue
@@ -99,7 +100,8 @@ for parts in PROC_NET_TCP4:
 	if local_ip4 == IPv4_LOCALHOST:
 		continue
 
-	ALL_LISTENING_PORTS.append(local_port_decimal)
+	ALL_LISTENING_PORTS.append(local_port)
+print ALL_LISTENING_PORTS
 
 
 #PROC_NET_TCP6 = [ line.split() for line in open('/proc/net/tcp6').readlines() if line.strip()[:2] != 'sl']
@@ -128,6 +130,20 @@ def check_process(pid):
 	except KeyError:
 		user = '<None>'
 		alert(1, 'no matching user for uid%s (pid=%s)' % (uid, pid), locals())
+
+	for line in open('/proc/%s/status' % (pid)).readlines():
+		line = line.strip().replace('\t', ' ')
+		if line:
+			if line.startswith('Name:'):
+				status_name = line.split(' ', 1)[1]
+			elif line.startswith('State:'):
+				status_state = line.split(' ', 1)[1]
+	del line
+
+	print '\nPID: ', pid, status_name, uid, user, locals()
+
+	if status_state.startswith('Z'):
+		alert(2, 'zombie process', locals())
 
 	# procs command line
 	cmdline = None
@@ -159,12 +175,14 @@ def check_process(pid):
 			return True
 		else:
 			alert(1, 'proc with no exe and not running as root', locals())
-			return False
+			if comm == 'cat':
+				return True
+			else:
+				return False
 
 	LOCALS = locals()
 
-	print '\nPID: ', pid, uid, user, exe, comm, cmdline
-
+	print exe, comm, cmdline
 
 	if 'clamscan' in exe:
 		alert(2, 'clamscan running', LOCALS)
@@ -249,37 +267,46 @@ def check_process(pid):
 							local = parts[1]
 							remote = parts[2]
 							state = parts[3]
-							local_port_decimal = int(local[9:], 16)
-							remote_port_decimal = int(remote[9:], 16)
+							local_port = str(int(local[9:], 16))
+							remote_port = str(int(remote[9:], 16))
 							local_ip4 = local[:8]
 							remote_ip4 = remote[:8]
+
+							ok = False
 
 							if state == '0A':
 								if local_ip4 == IPv4_LOCALHOST:
 									break
 								elif 'NET_LISTEN' in EXTRAS_DICT.keys():
-									ok = False
 									for ip, port in EXTRAS_DICT['NET_LISTEN']:
-										if port == str(local_port_decimal):
+										if port == local_port:
 											ok = True
 											break
 
 								if not ok:
-									alert(1, 'process %s listens on non-localhost port %i' % (comm, local_port_decimal), LOCALS)
-
-							elif state == '01':
-								if remote_ip4 == IPv4_LOCALHOST:
-									break
-								elif 'NET_CON' in EXTRA:
-									break
-								alert(1, 'process %s has an active connection between local IP:port %s:%i and remote IP:port %s:%i' % (comm, hexip4_to_ip4(local_ip4), local_port_decimal, hexip4_to_ip4(remote_ip4), remote_port_decimal), LOCALS)
+									alert(1, 'process %s listens on non-localhost port %s' % (comm, local_port), LOCALS)
 
 							else:
 								if remote_ip4 == IPv4_LOCALHOST:
 									break
-								elif 'NET_CON' in EXTRA:
-									break
-								alert(1, 'process %s has a connection between local IP:port %s:%i and remote IP:port %s:%i in state %s' % (comm, hexip4_to_ip4(local_ip4), local_port_decimal, hexip4_to_ip4(remote_ip4), remote_port_decimal, state), LOCALS)
+
+								if local_port in ALL_LISTENING_PORTS:
+									if 'NET_CON_IN' in EXTRAS_DICT:
+										pass
+									else:
+										alert(1, 'process %s has an inbound connection to local %s:%s from remote %s:%s in state %s' % (comm, hexip4_to_ip4(local_ip4), local_port, hexip4_to_ip4(remote_ip4), remote_port, state), LOCALS)
+								else:
+									if 'NET_CON_OUT' in EXTRAS_DICT:
+										for ip, port in EXTRAS_DICT['NET_CON_OUT']:
+											if port == remote_port:
+												ok = True
+												break
+
+									if not ok:
+										if state == '01':
+											alert(1, 'process %s has an active outbound connection to remote %s:%s' % (comm, hexip4_to_ip4(remote_ip4), remote_port), LOCALS)
+										else:
+											alert(1, 'process %s has/had an outbound connection to remote %s:%s, now in state %s' % (comm, hexip4_to_ip4(remote_ip4), remote_port, state), LOCALS)
 
 					elif of.startswith('/etc'):
 						alert(2, 'process has open file in /etc, of=%s' % (of), LOCALS)
@@ -301,12 +328,6 @@ def check_process(pid):
 		return False
 
 for pid in PIDS:
-	try:
-		is_ok = check_process(pid)
-		if not is_ok:
-			break
-	except IOError: # proc has already terminated
-		continue
-	except Exception, e:
-		print e
-		sys.exit(2)
+	is_ok = check_process(pid)
+	if not is_ok:
+		break
