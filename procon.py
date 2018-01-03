@@ -150,6 +150,7 @@ def check_process(pid):
 				status_state = line.split(' ', 1)[1]
 	del line
 
+
 	if status_state.startswith('Z'):
 		alert(2, 'zombie process', locals())
 
