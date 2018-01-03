@@ -71,19 +71,10 @@ def hexip4_to_ip4(hex_ip):
 now_epoch = time.time()
 
 MY_PID = str(os.getpid())
-print MY_PID
-os.system('cat /proc/%s/cmdline' % (MY_PID))
-os.system("printf '\n'")
 MY_PPID = str(os.getppid())
-print MY_PPID
-os.system('cat /proc/%s/cmdline' % (MY_PPID))
-os.system("printf '\n'")
-MY_PPPID = [line.split()[1] for line in open('/proc/'+MY_PPID+'/status').readlines() if line.startswith('PPid:') ][0]
-print MY_PPPID
-os.system('cat /proc/%s/cmdline' % (MY_PPPID))
-os.system("printf '\n'")
+#MY_PPPID = [line.split()[1] for line in open('/proc/'+MY_PPID+'/status').readlines() if line.startswith('PPid:') ][0]
 
-ME = [MY_PID, MY_PPID, MY_PPPID]
+ME = [MY_PID, MY_PPID]
 #ME = []	#TODO RM
 
 # fetch all running process PIDs, as strings
@@ -93,7 +84,6 @@ PROC_NET_TCP4 = [ line.split() for line in open('/proc/net/tcp').readlines() if 
 PROC_NET_TCP4_MAP = {}
 for parts in PROC_NET_TCP4:
 	PROC_NET_TCP4_MAP[parts[9]] = parts
-#LISTENING_TCP4_SOCKETS = [ [int(parts[1][9:], 16), hexip4_to_ip4(parts[1][:8])] for parts in PROC_NET_TCP4 if parts[3] == '0A']
 LISTENING_NONLOCALHOST_TCP4_SOCKETS = [ int(parts[1][9:], 16) for parts in PROC_NET_TCP4 if parts[3] == '0A' and parts[1][:8] != IPv4_LOCALHOST]
 
 ALL_LISTENING_PORTS = []
@@ -110,16 +100,7 @@ for parts in PROC_NET_TCP4:
 		continue
 
 	ALL_LISTENING_PORTS.append(local_port)
-print
-print ALL_LISTENING_PORTS
 
-
-#PROC_NET_TCP6 = [ line.split() for line in open('/proc/net/tcp6').readlines() if line.strip()[:2] != 'sl']
-#PROC_NET_TCP6_MAP = {}
-#for line in PROC_NET_TCP4:
-#	PROC_NET_TCP6_MAP[line[9]] = line
-#LISTENING_TCP6_SOCKETS = [ int(parts[1][33:], 16) for parts in PROC_NET_TCP6 if parts[3] == '0A']
-#print LISTENING_TCP6_SOCKETS
 
 def check_process(pid):
 	# procs proc dir
@@ -191,15 +172,8 @@ def check_process(pid):
 
 	LOCALS = locals()
 
-	print '\nPID: ', pid, status_name, uid, user, locals()
-	print exe, comm, cmdline
-
-	if 'clamscan' in exe:
-		alert(2, 'clamscan running', LOCALS)
-
 	proc_is_whitelisted = False
 	for whitelist in PROC_WHITELIST:
-		#print whitelist
 		try:
 			VARS = whitelist[0]
 			VALS = whitelist[1]
@@ -209,7 +183,6 @@ def check_process(pid):
 			for i in range(len(VARS)):
 				vr = VARS[i]
 				vl = VALS[i]
-				#print vr, vl
 				
 				if vr in ['exe', 'cmdline'] and vl.endswith('>'):
 					vl = vl[:-1]
@@ -251,12 +224,9 @@ def check_process(pid):
 							proc_is_whitelisted = False
 							break
 				else:
-					#print 'check', vr, vl, LOCALS[vr]
 					if LOCALS[vr] != vl:
 						proc_is_whitelisted = False
-						#print 'break'
 						break
-					#print 'ok'
 
 			vr = 'OPEN FILES'
 			vl = None
