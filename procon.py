@@ -71,11 +71,20 @@ def hexip4_to_ip4(hex_ip):
 now_epoch = time.time()
 
 MY_PID = str(os.getpid())
+print MY_PID
+os.system('cat /proc/%s/cmdline' % (MY_PID))
+os.system("printf '\n'")
 MY_PPID = str(os.getppid())
+print MY_PPID
+os.system('cat /proc/%s/cmdline' % (MY_PPID))
+os.system("printf '\n'")
 MY_PPPID = [line.split()[1] for line in open('/proc/'+MY_PPID+'/status').readlines() if line.startswith('PPid:') ][0]
+print MY_PPPID
+os.system('cat /proc/%s/cmdline' % (MY_PPPID))
+os.system("printf '\n'")
 
 ME = [MY_PID, MY_PPID, MY_PPPID]
-ME = []	#TODO RM
+#ME = []	#TODO RM
 
 # fetch all running process PIDs, as strings
 PIDS = [pid for pid in os.listdir('/proc') if pid.isdigit() and pid not in ME]
@@ -101,6 +110,7 @@ for parts in PROC_NET_TCP4:
 		continue
 
 	ALL_LISTENING_PORTS.append(local_port)
+print
 print ALL_LISTENING_PORTS
 
 
@@ -140,8 +150,6 @@ def check_process(pid):
 				status_state = line.split(' ', 1)[1]
 	del line
 
-	print '\nPID: ', pid, status_name, uid, user, locals()
-
 	if status_state.startswith('Z'):
 		alert(2, 'zombie process', locals())
 
@@ -175,13 +183,14 @@ def check_process(pid):
 			return True
 		else:
 			alert(1, 'proc with no exe and not running as root', locals())
-			if comm == 'cat':
-				return True
-			else:
-				return False
+			#if comm == 'cat':
+			#	return True
+			#else:
+			return False
 
 	LOCALS = locals()
 
+	print '\nPID: ', pid, status_name, uid, user, locals()
 	print exe, comm, cmdline
 
 	if 'clamscan' in exe:
