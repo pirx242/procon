@@ -114,15 +114,32 @@ ME = [MY_PID, MY_PPID]
 
 # fetch all running process PIDs, as strings
 PIDS = [pid for pid in os.listdir('/proc') if pid.isdigit() and pid not in ME]
-PIDS = ['978']
+PIDS = ['978', '1366']
 
 def main():
-	nr_bad_processes = 0
-	for pid in PIDS:
-		if not check_process(pid):
-			nr_bad_processes += 1
+	nr_procs_invalid = 0
+	nr_procs_checked = 0
+	nr_procs_skipped = 0
 
-	if nr_bad_processes:
+	for pid in PIDS:
+		r = check_process(pid)
+
+		if r == None:
+			nr_procs_skipped += 1
+			continue
+
+		nr_procs_checked += 1
+
+		if r == True:
+			pass
+		else:
+			nr_procs_invalid += 1
+
+	print 'checked', nr_procs_checked
+	print 'skipped', nr_procs_skipped
+	print 'invalid', nr_procs_invalid
+
+	if nr_procs_invalid:
 		sys.exit(2)
 	else:
 		sys.exit(0)
@@ -131,10 +148,100 @@ def main():
 def check_process(pid):
 	print 'checking pid', pid
 
-	print get_process_open_files(pid)
+	v = get_process_variables(pid)
+	print v
 
+	try:
+		ofs = get_process_open_files(pid)
+		print ofs
+	except OSError, e:
+		alert(2, 'could not get list of open files', locals())
+		return None
+
+
+
+	return True
+
+
+def get_process_variables(pid):
+	pid_dir = os.path.join('/proc', pid) + os.sep
+
+	# procs UID
+	try:
+		uid = str(os.stat(pid_dir).st_uid)
+	except OSError, e:
+		alert(42, e, locals())
+		return False
+
+	# procs user name
+	try:
+		user = pwd.getpwuid(int(uid)).pw_name
+	except KeyError:
+		user = None
+		alert(1, 'no matching username for uid%s (pid=%s)' % (uid, pid), locals())
+
+	for line in open('/proc/%s/status' % (pid)).readlines():
+		line = line.strip().replace('\t', ' ')
+		if line:
+			if line.startswith('Name:'):
+				status_name = line.split(' ', 1)[1]
+			elif line.startswith('State:'):
+				status_state = line.split(' ', 1)[1][0]
+	del line
+
+
+	if status_state.startswith('Z'):
+		alert(2, 'zombie process', locals())
+
+	# procs command line
+	cmdline = open(pid_dir + 'cmdline').read()
+	cmdline = cmdline.replace(' ', '')
+	cmdline = cmdline.replace(chr(0), '').strip()[:80]
+
+	runtime = (NOW_EPOCH - os.stat(pid_dir + 'cmdline').st_mtime) / 3600.0
+
+	# procs command name
+	comm = open(pid_dir + 'comm').read().strip()
+
+	# procs exe file
+	exeage = 0.0
+	try:
+		exe = os.readlink(pid_dir + 'exe')
+		if ' (deleted)' in exe:
+			exeage = (NOW_EPOCH - os.stat(exe[:-10]).st_mtime) / 3600.0
+			alert(1, 'deleted file running', locals())
+			exe = exe[:-10]
+		else:
+			# executable files age (since last modified)
+			exeage = (NOW_EPOCH - os.stat(exe).st_mtime) / 3600.0
+	except OSError:
+		exe = None
+		exeage = 0
+
+		if uid == '0':
+			#kernel process
+			return True
+		else:
+			alert(1, 'proc with no exe and not running as root', locals())
+			return False
+
+	return [uid, user, status_state, cmdline, runtime, comm, exe, exeage]
 
 def get_process_open_files(pid):
+	'''Returns a list of open files. Skips stuff like pipes, /dev/null and such.
+
+	Args:
+		pid (str):	the PID
+
+	Returns:
+		List of lists. Like e.g.
+		[['regular', '/foo/bar'], ['tcp4', '0A', '00000000', '22', '00000000', '0']]
+
+		An IP socket contains [protocol, state, local_ip4, local_port, remote_ip4, remote_port]
+		A regular file contains ['regular', filename]
+
+	'''
+
 	open_files = []
 	pid_fd_dir = os.path.join('/proc', pid, 'fd') + os.sep
 
@@ -142,7 +249,10 @@ def get_process_open_files(pid):
 		of = os.readlink(pid_fd_dir + ofd)
 
 		if of.startswith(os.sep):
-			open_files.append(['regular', of])
+			if of.startswith('/dev/'):
+				continue
+			else:
+				open_files.append(['regular', of])
 
 		elif of.startswith('socket:'):
 			inode = of.split('[')[1][:-1]
@@ -154,7 +264,7 @@ def get_process_open_files(pid):
 				sock = ['udp4'] + get_ip4_socket_from_inode(inode, PROC_NET_UDP4_MAP)
 				open_files.append(sock)
 			else:
-				pass
+				continue
 
 	return open_files
 
@@ -214,63 +324,6 @@ def get_ip4_socket_from_inode(inode, proc_net_map):
 
 
 def check_process_old(pid):
-	pid_dir = os.path.join('/proc', pid) + os.sep
-
-	# procs UID
-	try:
-		uid = str(os.stat(pid_dir).st_uid)
-	except OSError, e:
-		alert(42, e, locals())
-		return False
-
-	# procs user name
-	try:
-		user = pwd.getpwuid(int(uid)).pw_name
-	except KeyError:
-		user = None
-		alert(1, 'no matching username for uid%s (pid=%s)' % (uid, pid), locals())
-
-	for line in open('/proc/%s/status' % (pid)).readlines():
-		line = line.strip().replace('\t', ' ')
-		if line:
-			if line.startswith('Name:'):
-				status_name = line.split(' ', 1)[1]
-			elif line.startswith('State:'):
-				status_state = line.split(' ', 1)[1]
-	del line
-
-
-	if status_state.startswith('Z'):
-		alert(2, 'zombie process', locals())
-
-	# procs command line
-	cmdline = open(pid_dir + 'cmdline').read()
-	cmdline = cmdline.replace(' ', '')
-	cmdline = cmdline.replace(chr(0), '').strip()[:80]
-
-	runtime = (now_epoch - os.stat(pid_dir + 'cmdline').st_mtime) / 3600.0
-
-	# procs command name
-	comm = open(pid_dir + 'comm').read().strip()
-
-	# procs exe file
-	exeage = 0.0
-	try:
-		exe = os.readlink(pid_dir + 'exe')
-		if ' (deleted)' in exe:
-			exeage = (now_epoch - os.stat(exe[:-10]).st_mtime) / 3600.0
-			alert(1, 'deleted file running', locals())
-			exe = exe[:-10]
-		else:
-			# executable files age (since last modified)
-			exeage = (now_epoch - os.stat(exe).st_mtime) / 3600.0
-	except OSError:
-		if uid == '0':
-			#kernel process
-			return True
-		else:
-			alert(1, 'proc with no exe and not running as root', locals())
-			return False
 
 	proc_is_whitelisted = False
 	for whitelist in PROC_WHITELIST_LINES_EXPLODED:
