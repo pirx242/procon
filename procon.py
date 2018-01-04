@@ -6,6 +6,7 @@ from optparse import OptionParser
 IPv4_LOCALHOST = '0100007F'
 
 parser = OptionParser()
+parser.add_option('-v', action='store_true', dest='verbose', default=False, help = 'verbose')
 parser.add_option('-p', action='append', type=str, dest='proc_file', default=[], help = 'conf file with process whitelisting (can be repeated)')
 parser.add_option('-a', action='store', type=int, dest='bin_age', default=[], help = 'min age of running binaries (hours)')
 (opts, args) = parser.parse_args(sys.argv[1:])
@@ -15,9 +16,15 @@ if os.getuid() != 0:
 	sys.exit(1)
 
 # read conf from conf files
-proc_whitelist_raw = []
+proc_whitelist_lines = []
 for f in opts.proc_file:
-	proc_whitelist_raw = proc_whitelist_raw + [ line.strip() for line in open(f).readlines() if line.strip() and not line.strip().startswith('#') ]
+	i = 0
+	for line in open(f).readlines():
+		i += 1
+		line = line.strip()
+		if not line or line.startswith('#'):
+			continue
+		proc_whitelist_lines.append(['%s:%i' % (f, i), line])
 
 def alert(severity, alert_string, variables):
 	if severity == 1:
@@ -33,11 +40,11 @@ def alert(severity, alert_string, variables):
 		if variables:
 			print '%s(%s) %s' % (SEV, alert_string, variables)
 		else:
-			print '%s(%s)' % (SEV, alert_string)
+			print '%s! %s' % (SEV, alert_string)
 
 # parse conf into whitelisting array
-PROC_WHITELIST = []
-for line in proc_whitelist_raw:
+PROC_WHITELIST_LINES_EXPLODED = []
+for where, line in proc_whitelist_lines:
 	i = line.find('#')
 	if i >= 0:
 		line = line[:i]
@@ -47,7 +54,7 @@ for line in proc_whitelist_raw:
 	VALS = tmp[1:nr_vars+1]
 
 	if len(VALS) != nr_vars:
-		alert(2, 'skipping invalid cfg line: %s' % (line), {})
+		alert(2, 'Skipping invalid cfg line! %s: %s' % (where, line), {})
 		continue
 
 	EXTRAS_DICT = {}
@@ -58,8 +65,7 @@ for line in proc_whitelist_raw:
 			EXTRAS_DICT[var].append(val.split(':'))
 		else:
 			EXTRAS_DICT[var] = [val.split(':')]
-	PROC_WHITELIST.append([VARS, VALS, EXTRAS_DICT])
-
+	PROC_WHITELIST_LINES_EXPLODED.append([VARS, VALS, EXTRAS_DICT, where, line, 0])
 
 def hexip4_to_ip4(hex_ip):
 	r = str(int(hex_ip[6:8], 16))
@@ -107,7 +113,6 @@ def check_process(pid):
 	pid_dir = os.path.join('/proc', pid) + os.sep
 
 	# procs UID
-	uid = None
 	try:
 		uid = str(os.stat(pid_dir).st_uid)
 	except OSError, e:
@@ -115,12 +120,11 @@ def check_process(pid):
 		return False
 
 	# procs user name
-	user = None
 	try:
 		user = pwd.getpwuid(int(uid)).pw_name
 	except KeyError:
-		user = '<None>'
-		alert(1, 'no matching user for uid%s (pid=%s)' % (uid, pid), locals())
+		user = None
+		alert(1, 'no matching username for uid%s (pid=%s)' % (uid, pid), locals())
 
 	for line in open('/proc/%s/status' % (pid)).readlines():
 		line = line.strip().replace('\t', ' ')
@@ -136,7 +140,6 @@ def check_process(pid):
 		alert(2, 'zombie process', locals())
 
 	# procs command line
-	cmdline = None
 	cmdline = open(pid_dir + 'cmdline').read()
 	cmdline = cmdline.replace(' ', '')
 	cmdline = cmdline.replace(chr(0), '').strip()[:80]
@@ -144,11 +147,9 @@ def check_process(pid):
 	runtime = (now_epoch - os.stat(pid_dir + 'cmdline').st_mtime) / 3600.0
 
 	# procs command name
-	comm = None
 	comm = open(pid_dir + 'comm').read().strip()
 
 	# procs exe file
-	exe = None
 	exeage = 0.0
 	try:
 		exe = os.readlink(pid_dir + 'exe')
@@ -165,19 +166,19 @@ def check_process(pid):
 			return True
 		else:
 			alert(1, 'proc with no exe and not running as root', locals())
-			#if comm == 'cat':
-			#	return True
-			#else:
 			return False
 
-	LOCALS = locals()
-
 	proc_is_whitelisted = False
-	for whitelist in PROC_WHITELIST:
+	for whitelist in PROC_WHITELIST_LINES_EXPLODED:
 		try:
 			VARS = whitelist[0]
 			VALS = whitelist[1]
 			EXTRAS_DICT = whitelist[2]
+			WHERE = whitelist[3]
+			LINE = whitelist[4]
+			HITS = whitelist[5]
+
+			LOCALS = locals()
 
 			proc_is_whitelisted = True
 			for i in range(len(VARS)):
@@ -304,10 +305,15 @@ def check_process(pid):
 	if proc_is_whitelisted:
 		return True
 	else:
-		alert(42, 'ok?', LOCALS)
+		alert(1, 'bad process', LOCALS)
 		return False
 
+nr_bad_processes = 0
 for pid in PIDS:
-	is_ok = check_process(pid)
-	if not is_ok:
-		break
+	if not check_process(pid):
+		nr_bad_processes += 1
+
+if nr_bad_processes:
+	sys.exit(2)
+else:
+	sys.exit(0)
