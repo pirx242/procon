@@ -114,7 +114,7 @@ ME = [MY_PID, MY_PPID]
 
 # fetch all running process PIDs, as strings
 PIDS = [pid for pid in os.listdir('/proc') if pid.isdigit() and pid not in ME]
-PIDS = ['978', '1366']
+PIDS = ['997', '1366']
 
 def main():
 	nr_procs_invalid = 0
@@ -158,9 +158,13 @@ def check_process(pid):
 		alert(2, 'could not get list of open files', locals())
 		return None
 
-
+	check_process_variables_files(v, ofs)
 
 	return True
+
+
+def check_process_variables_files(variables, open_files):
+	pass
 
 
 def get_process_variables(pid):
