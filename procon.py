@@ -114,7 +114,7 @@ ME = [MY_PID, MY_PPID]
 
 # fetch all running process PIDs, as strings
 PIDS = [pid for pid in os.listdir('/proc') if pid.isdigit() and pid not in ME]
-PIDS = ['997', '1366']
+PIDS = ['997', '1366', '967']
 
 def main():
 	nr_procs_invalid = 0
@@ -122,6 +122,7 @@ def main():
 	nr_procs_skipped = 0
 
 	for pid in PIDS:
+		print
 		r = check_process(pid)
 
 		if r == None:
@@ -174,8 +175,7 @@ def get_process_variables(pid):
 	try:
 		uid = str(os.stat(pid_dir).st_uid)
 	except OSError, e:
-		alert(42, e, locals())
-		return False
+		return {}
 
 	# procs user name
 	try:
@@ -224,12 +224,13 @@ def get_process_variables(pid):
 
 		if uid == '0':
 			#kernel process
-			return True
+			return locals()
 		else:
 			alert(1, 'proc with no exe and not running as root', locals())
-			return False
+			return locals()
 
-	return [uid, user, status_state, cmdline, runtime, comm, exe, exeage]
+	result = True
+	return locals()
 
 def get_process_open_files(pid):
 	'''Returns a list of open files. Skips stuff like pipes, /dev/null and such.
@@ -246,7 +247,7 @@ def get_process_open_files(pid):
 
 	'''
 
-	open_files = []
+	open_files = {'regular': [], 'tcp4': [], 'udp4': []}
 	pid_fd_dir = os.path.join('/proc', pid, 'fd') + os.sep
 
 	for ofd in os.listdir(pid_fd_dir):
@@ -256,17 +257,17 @@ def get_process_open_files(pid):
 			if of.startswith('/dev/'):
 				continue
 			else:
-				open_files.append(['regular', of])
+				open_files['regular'].append(of)
 
 		elif of.startswith('socket:'):
 			inode = of.split('[')[1][:-1]
 
 			if inode in PROC_NET_TCP4_MAP.keys():
-				sock = ['tcp4'] + get_ip4_socket_from_inode(inode, PROC_NET_TCP4_MAP)
-				open_files.append(sock)
+				sock = get_ip4_socket_from_inode(inode, PROC_NET_TCP4_MAP)
+				open_files['tcp4'].append(sock)
 			elif inode in PROC_NET_UDP4_MAP.keys():
-				sock = ['udp4'] + get_ip4_socket_from_inode(inode, PROC_NET_UDP4_MAP)
-				open_files.append(sock)
+				sock = get_ip4_socket_from_inode(inode, PROC_NET_UDP4_MAP)
+				open_files['udp4'].append(sock)
 			else:
 				continue
 
@@ -282,6 +283,9 @@ def get_ip4_socket_from_inode(inode, proc_net_map):
 	remote_port = str(int(remote[9:], 16))
 	local_ip4 = local[:8]
 	remote_ip4 = remote[:8]
+
+	del parts, local, remote, proc_net_map
+	return locals()
 
 	return [state, local_ip4, local_port, remote_ip4, remote_port]
 
