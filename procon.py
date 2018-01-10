@@ -191,6 +191,8 @@ def get_process_variables(pid):
 				status_name = line.split(' ', 1)[1]
 			elif line.startswith('State:'):
 				status_state = line.split(' ', 1)[1][0]
+			elif line.startswith('Threads:'):
+				status_threads = line.split(' ', 1)[1]
 	del line
 
 
