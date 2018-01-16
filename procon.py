@@ -4,6 +4,7 @@ import os, pwd, time, sys
 from optparse import OptionParser
 
 IPv4_LOCALHOST = '0100007F'
+IP_STATE_LISTEN = '0A'
 
 parser = OptionParser()
 parser.add_option('-v', action='store_true', dest='verbose', default=False, help = 'verbose')
@@ -92,23 +93,24 @@ def hexip4_to_ip4(hex_ip):
 def get_proc_net_maps():
 	r = {}
 
-	PROC_NET_TCP4 = [ line.split() for line in open('/proc/net/tcp').readlines() if line.strip()[:2] != 'sl']
-	PROC_NET_TCP4_MAP = {}
+	proc_net_tcp4 = [ line.split() for line in open('/proc/net/tcp').readlines() if line.strip()[:2] != 'sl']
+	proc_net_tcp4_map = {}
 	# create a map with the inode as key
-	for parts in PROC_NET_TCP4:
-		PROC_NET_TCP4_MAP[parts[9]] = parts
-	r['tcp4'] = PROC_NET_TCP4_MAP
+	for parts in proc_net_tcp4:
+		proc_net_tcp4_map[parts[9]] = parts
+	r['tcp4'] = proc_net_tcp4_map
 
-	PROC_NET_UDP4 = [ line.split() for line in open('/proc/net/udp').readlines() if line.strip()[:2] != 'sl']
-	PROC_NET_UDP4_MAP = {}
+	proc_net_udp4 = [ line.split() for line in open('/proc/net/udp').readlines() if line.strip()[:2] != 'sl']
+	proc_net_udp4_map = {}
 	# create a map with the inode as key
-	for parts in PROC_NET_UDP4:
-		PROC_NET_UDP4_MAP[parts[9]] = parts
-	r['udp4'] = PROC_NET_UDP4_MAP
+	for parts in proc_net_udp4:
+		proc_net_udp4_map[parts[9]] = parts
+	r['udp4'] = proc_net_udp4_map
 
 	return r
 
-
+def get_all_listening_nonlocalhost_ip4_ports(proc_net_map):
+	return [ str(int(parts[1][9:], 16)) for inode, parts in proc_net_map.items() if parts[3] == IP_STATE_LISTEN and parts[1][:8] != IPv4_LOCALHOST]
 
 
 NOW_EPOCH = time.time()
@@ -138,32 +140,17 @@ def main():
 
 	proc_net_maps = get_proc_net_maps()
 
-	LISTENING_NONLOCALHOST_TCP4_SOCKETS = [ int(parts[1][9:], 16) for parts in proc_net_maps['tcp4'] if parts[3] == '0A' and parts[1][:8] != IPv4_LOCALHOST]
-	print LISTENING_NONLOCALHOST_TCP4_SOCKETS
-
-	ALL_LISTENING_TCP4_PORTS = []
-	for parts in proc_net_maps['tcp4']:
-		local = parts[1]
-		state = parts[3]
-		local_port = str(int(local[9:], 16))
-		local_ip4 = local[:8]
-
-		if state != "0A":
-			continue
-
-		if local_ip4 == IPv4_LOCALHOST:
-			continue
-
-		ALL_LISTENING_TCP4_PORTS.append(local_port)
-
-	print ALL_LISTENING_TCP4_PORTS
-
+	all_listening_nonlocalhost_tcp4_ports = get_all_listening_nonlocalhost_ip4_ports(proc_net_maps['tcp4'])
+	all_listening_nonlocalhost_udp4_ports = get_all_listening_nonlocalhost_ip4_ports(proc_net_maps['udp4'])
+	proc_net_maps['tcp4']['all_listening_nonlocalhost_ports'] = all_listening_nonlocalhost_tcp4_ports
+	proc_net_maps['udp4']['all_listening_nonlocalhost_ports'] = all_listening_nonlocalhost_udp4_ports
 
 	for pid in PIDS:
 		print
 		print 'checking pid', pid
 		try:
 			v = get_process_variables(pid)
+			print v['comm']
 		except Exception, e:
 			alert(0, e, None)
 			procs_skipped.append(pid)
@@ -196,7 +183,7 @@ def main():
 def check_process_ok(pid, whitelisting_config, proc_net_maps):
 	try:
 		v = get_process_variables(pid)
-		ofs = get_process_open_files(pid)
+		ofs = get_process_open_files(pid, proc_net_maps)
 	except Exception, e:
 		alert(0, e, None)
 		return True
@@ -268,7 +255,7 @@ def get_process_variables(pid):
 def proc_is_kernel(v):
 	return v['exe'] is None
 
-def get_process_open_files(pid):
+def get_process_open_files(pid, proc_net_maps):
 	'''Returns a dict of open files. Skips stuff like pipes, /dev/null and such.
 
 	Args:
@@ -286,6 +273,9 @@ def get_process_open_files(pid):
 	open_files = {'regular': [], 'tcp4': [], 'udp4': []}
 	pid_fd_dir = os.path.join('/proc', pid, 'fd') + os.sep
 
+	proc_net_tcp4_map = proc_net_maps['tcp4']
+	proc_net_udp4_map = proc_net_maps['udp4']
+
 	for ofd in os.listdir(pid_fd_dir):
 		of = os.readlink(pid_fd_dir + ofd)
 
@@ -298,11 +288,11 @@ def get_process_open_files(pid):
 		elif of.startswith('socket:'):
 			inode = of.split('[')[1][:-1]
 
-			if inode in PROC_NET_TCP4_MAP.keys():
-				sock = get_ip4_socket_from_inode(inode, PROC_NET_TCP4_MAP)
+			if inode in proc_net_tcp4_map.keys():
+				sock = get_ip4_socket_from_inode(inode, proc_net_tcp4_map)
 				open_files['tcp4'].append(sock)
-			elif inode in PROC_NET_UDP4_MAP.keys():
-				sock = get_ip4_socket_from_inode(inode, PROC_NET_UDP4_MAP)
+			elif inode in proc_net_udp4_map.keys():
+				sock = get_ip4_socket_from_inode(inode, proc_net_udp4_map)
 				open_files['udp4'].append(sock)
 			else:
 				continue
@@ -323,48 +313,6 @@ def get_ip4_socket_from_inode(inode, proc_net_map):
 	del parts, local, remote, proc_net_map
 	return locals()
 
-	return [state, local_ip4, local_port, remote_ip4, remote_port]
-
-		# 		ok = False
-
-		# 		if state == '0A':
-		# 			if local_ip4 == IPv4_LOCALHOST:
-		# 				break
-		# 			elif 'NET_LISTEN' in EXTRAS_DICT.keys():
-		# 				for ip, port in EXTRAS_DICT['NET_LISTEN']:
-		# 					if port == local_port:
-		# 						ok = True
-		# 						break
-
-		# 			if not ok:
-		# 				alert(1, 'process %s listens on non-localhost port %s' % (comm, local_port), proc_variables)
-
-		# 		else:
-		# 			if remote_ip4 == IPv4_LOCALHOST:
-		# 				break
-
-		# 			if local_port in ALL_LISTENING_PORTS:
-		# 				if 'NET_CON_IN' in EXTRAS_DICT:
-		# 					pass
-		# 				else:
-		# 					alert(1, 'process %s has an inbound connection to local %s:%s from remote %s:%s in state %s' % (comm, hexip4_to_ip4(local_ip4), local_port, hexip4_to_ip4(remote_ip4), remote_port, state), proc_variables)
-		# 			else:
-		# 				if 'NET_CON_OUT' in EXTRAS_DICT:
-		# 					for ip, port in EXTRAS_DICT['NET_CON_OUT']:
-		# 						if port == remote_port:
-		# 							ok = True
-		# 							break
-
-		# 				if not ok:
-		# 					if state == '01':
-		# 						alert(1, 'process %s has an active outbound connection to remote %s:%s' % (comm, hexip4_to_ip4(remote_ip4), remote_port), proc_variables)
-		# 					else:
-		# 						alert(1, 'process %s has/had an outbound connection to remote %s:%s, now in state %s' % (comm, hexip4_to_ip4(remote_ip4), remote_port, state), proc_variables)
-
-		# elif of.startswith('/etc'):
-		# 	alert(2, 'process has open file in /etc, of=%s' % (of), proc_variables)
-		# else:
-		# 	pass
 
 def check_process_variables_files(pid, proc_variables, open_files, whitelisting_config, proc_net_maps):
 	proc_is_whitelisted = False
@@ -428,23 +376,62 @@ def check_process_variables_files(pid, proc_variables, open_files, whitelisting_
 			break
 
 	if proc_is_whitelisted:
-		pass
 
+		all_listening_nonlocalhost_tcp4_ports = proc_net_maps['tcp4']['all_listening_nonlocalhost_ports']
+		all_listening_nonlocalhost_udp4_ports = proc_net_maps['udp4']['all_listening_nonlocalhost_ports']
+
+		for file_type in open_files.keys():
+			if file_type == 'regular':
+				for file in open_files['regular']:
+					print 'checking regular file', file
+			else:
+				for file in open_files[file_type]:
+					file_ok = False
+					print file
+
+					if file['local_ip4'] == IPv4_LOCALHOST:
+						print 'skipping local', file
+						continue
+					else:
+						if file['state'] == IP_STATE_LISTEN:
+							if 'NET_LISTEN' in EXTRAS_DICT.keys():
+								for ip, port in EXTRAS_DICT['NET_LISTEN']:
+									if port == file['local_port']:
+										file_ok = True
+										break
+
+							if not file_ok:
+								alert(1, 'process %s listens on non-localhost port %s' % (comm, local_port), proc_variables)
+
+						else:
+							if file['local_port'] in all_listening_nonlocalhost_tcp4_ports:
+								if 'NET_CON_IN' in EXTRAS_DICT:
+									pass
+								else:
+									alert(1, 'process %s has an inbound connection to local %s:%s from remote %s:%s in state %s' % (comm, hexip4_to_ip4(local_ip4), local_port, hexip4_to_ip4(remote_ip4), remote_port, state), proc_variables)
+							else:
+								if 'NET_CON_OUT' in EXTRAS_DICT:
+									for ip, port in EXTRAS_DICT['NET_CON_OUT']:
+										if port == remote_port:
+											ok = True
+											break
+
+								if not file_ok:
+									if state == '01':
+										alert(1, 'process %s has an active outbound connection to remote %s:%s' % (comm, hexip4_to_ip4(remote_ip4), remote_port), proc_variables)
+									else:
+										alert(1, 'process %s has/had an outbound connection to remote %s:%s, now in state %s' % (comm, hexip4_to_ip4(remote_ip4), remote_port, state), proc_variables)
 
 	return proc_is_whitelisted
 
 
 
 
+		# elif of.startswith('/etc'):
+		# 	alert(2, 'process has open file in /etc, of=%s' % (of), proc_variables)
+		# else:
+		# 	pass
 
-def check_process_old(pid):
-
-	
-	if proc_is_whitelisted:
-		return True
-	else:
-		alert(1, 'bad process', proc_variables)
-		return False
 
 
 if __name__ == '__main__':
