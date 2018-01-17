@@ -53,6 +53,15 @@ def alert(severity, alert_string, variables):
 			print '%s! %s' % (SEV, alert_string)
 
 
+def print_verbose(msg, *rest):
+	if opts.verbose:
+		if not msg:
+			print
+		elif rest:
+			print 'VERBOSE:', msg, rest
+		else:
+			print 'VERBOSE:', msg
+
 def parse_procs_conf():
 	tmp_var_vals = []
 
