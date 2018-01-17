@@ -5,6 +5,7 @@ from optparse import OptionParser
 
 IPv4_LOCALHOST = '0100007F'
 IP_STATE_LISTEN = '0A'
+IP_STATE_ESTABLISHED = '01'
 
 parser = OptionParser()
 parser.add_option('-v', action='store_true', dest='verbose', default=False, help = 'verbose')
@@ -150,6 +151,7 @@ def main():
 		print 'checking pid', pid
 		try:
 			v = get_process_variables(pid)
+			ofs = get_process_open_files(pid, proc_net_maps)
 			print v['comm']
 		except Exception, e:
 			alert(0, e, None)
@@ -163,7 +165,8 @@ def main():
 
 		procs_checked.append(pid)
 
-		if not check_process_ok(pid, whitelisting_config, proc_net_maps):
+		if not check_process_ok(pid, v, ofs, whitelisting_config, proc_net_maps):
+			print pid, 'nok'
 			procs_invalid.append(pid)
 		else:
 			print pid, 'ok'
@@ -178,17 +181,6 @@ def main():
 		sys.exit(2)
 	else:
 		sys.exit(0)
-
-
-def check_process_ok(pid, whitelisting_config, proc_net_maps):
-	try:
-		v = get_process_variables(pid)
-		ofs = get_process_open_files(pid, proc_net_maps)
-	except Exception, e:
-		alert(0, e, None)
-		return True
-
-	return check_process_variables_files(pid, v, ofs, whitelisting_config, proc_net_maps)
 
 
 def get_process_variables(pid):
@@ -314,10 +306,11 @@ def get_ip4_socket_from_inode(inode, proc_net_map):
 	return locals()
 
 
-def check_process_variables_files(pid, proc_variables, open_files, whitelisting_config, proc_net_maps):
+def check_process_ok(pid, proc_variables, open_files, whitelisting_config, proc_net_maps):
 	proc_is_whitelisted = False
 
 	for line_list in whitelisting_config:
+		print line_list
 		VARS, VALS, EXTRAS_DICT, where, line, hits = line_list
 
 		proc_is_whitelisted = True
@@ -330,13 +323,13 @@ def check_process_variables_files(pid, proc_variables, open_files, whitelisting_
 					break
 			elif vr == 'pid':
 				if vl[0] == '<':
-					if int(pid) < int(vl[1:]):
+					if int(proc_variables[vr]) < int(vl[1:]):
 						pass
 					else:
 						proc_is_whitelisted = False
 						break
 				elif vl[0] == '>':
-					if int(pid) > int(vl[1:]):
+					if int(proc_variables[vr]) > int(vl[1:]):
 						pass
 					else:
 						proc_is_whitelisted = False
@@ -347,19 +340,19 @@ def check_process_variables_files(pid, proc_variables, open_files, whitelisting_
 						break
 			elif vr == 'uid':
 				if vl[0] == '<':
-					if int(uid) < int(vl[1:]):
+					if int(proc_variables[vr]) < int(vl[1:]):
 						pass
 					else:
 						proc_is_whitelisted = False
 						break
 				elif vl[0] == '>':
-					if int(uid) > int(vl[1:]):
+					if int(proc_variables[vr]) > int(vl[1:]):
 						pass
 					else:
 						proc_is_whitelisted = False
 						break
 				else:
-					if int(vl) != int(uid):
+					if int(vl) != int(proc_variables[vr]):
 						proc_is_whitelisted = False
 						break
 			else:
@@ -374,53 +367,62 @@ def check_process_variables_files(pid, proc_variables, open_files, whitelisting_
 		if proc_is_whitelisted:
 			# it got whitelisted by the last cfg line, the variables at least
 			break
+		print 'fail'
 
 	if proc_is_whitelisted:
+		print 'vars ok'
+		proc_is_whitelisted = check_process_open_files(pid, proc_variables, open_files, EXTRAS_DICT, proc_net_maps)
 
-		all_listening_nonlocalhost_tcp4_ports = proc_net_maps['tcp4']['all_listening_nonlocalhost_ports']
-		all_listening_nonlocalhost_udp4_ports = proc_net_maps['udp4']['all_listening_nonlocalhost_ports']
+	return proc_is_whitelisted
 
-		for file_type in open_files.keys():
-			if file_type == 'regular':
-				for file in open_files['regular']:
-					print 'checking regular file', file
-			else:
-				for file in open_files[file_type]:
-					file_ok = False
-					print file
 
-					if file['local_ip4'] == IPv4_LOCALHOST:
-						print 'skipping local', file
-						continue
+def check_process_open_files(pid, proc_variables, open_files, EXTRAS_DICT, proc_net_maps):
+	proc_is_whitelisted = True
+
+	all_listening_nonlocalhost_tcp4_ports = proc_net_maps['tcp4']['all_listening_nonlocalhost_ports']
+	all_listening_nonlocalhost_udp4_ports = proc_net_maps['udp4']['all_listening_nonlocalhost_ports']
+
+	for file_type in open_files.keys():
+		if file_type == 'regular':
+			for file in open_files['regular']:
+				print 'checking regular file', file
+		else:
+			for file in open_files[file_type]:
+				file_ok = False
+				print file
+
+				if file['local_ip4'] == IPv4_LOCALHOST:
+					print 'skipping local', file
+					continue
+				else:
+					if file['state'] == IP_STATE_LISTEN:
+						if 'NET_LISTEN' in EXTRAS_DICT.keys():
+							for ip, port in EXTRAS_DICT['NET_LISTEN']:
+								if port == file['local_port']:
+									file_ok = True
+									break
+
+						if not file_ok:
+							alert(1, 'process %s listens on non-localhost port %s' % (proc_variables['comm'], file['local_port']), proc_variables)
+
 					else:
-						if file['state'] == IP_STATE_LISTEN:
-							if 'NET_LISTEN' in EXTRAS_DICT.keys():
-								for ip, port in EXTRAS_DICT['NET_LISTEN']:
-									if port == file['local_port']:
-										file_ok = True
+						if file['local_port'] in all_listening_nonlocalhost_tcp4_ports:
+							if 'NET_CON_IN' in EXTRAS_DICT:
+								pass
+							else:
+								alert(1, 'process %s has an inbound connection to local %s:%s from remote %s:%s in state %s' % (proc_variables['comm'], hexip4_to_ip4(file['local_ip4']), file['local_port'], hexip4_to_ip4(file['remote_ip4']), file['remote_port'], file['state']), proc_variables)
+						else:
+							if 'NET_CON_OUT' in EXTRAS_DICT:
+								for ip, port in EXTRAS_DICT['NET_CON_OUT']:
+									if port == file['remote_port']:
+										ok = True
 										break
 
 							if not file_ok:
-								alert(1, 'process %s listens on non-localhost port %s' % (comm, local_port), proc_variables)
-
-						else:
-							if file['local_port'] in all_listening_nonlocalhost_tcp4_ports:
-								if 'NET_CON_IN' in EXTRAS_DICT:
-									pass
+								if file['state'] == IP_STATE_ESTABLISHED:
+									alert(1, 'process %s has an active outbound connection to remote %s:%s' % (proc_variables['comm'], hexip4_to_ip4(file['remote_ip4']), file['remote_port']), proc_variables)
 								else:
-									alert(1, 'process %s has an inbound connection to local %s:%s from remote %s:%s in state %s' % (comm, hexip4_to_ip4(local_ip4), local_port, hexip4_to_ip4(remote_ip4), remote_port, state), proc_variables)
-							else:
-								if 'NET_CON_OUT' in EXTRAS_DICT:
-									for ip, port in EXTRAS_DICT['NET_CON_OUT']:
-										if port == remote_port:
-											ok = True
-											break
-
-								if not file_ok:
-									if state == '01':
-										alert(1, 'process %s has an active outbound connection to remote %s:%s' % (comm, hexip4_to_ip4(remote_ip4), remote_port), proc_variables)
-									else:
-										alert(1, 'process %s has/had an outbound connection to remote %s:%s, now in state %s' % (comm, hexip4_to_ip4(remote_ip4), remote_port, state), proc_variables)
+									alert(1, 'process %s has/had an outbound connection to remote %s:%s, now in state %s' % (proc_variables['comm'], hexip4_to_ip4(file['remote_ip4']), file['remote_port'], file['state']), proc_variables)
 
 	return proc_is_whitelisted
 
