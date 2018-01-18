@@ -461,14 +461,37 @@ def check_process_open_files(pid, proc_variables, open_files, EXTRAS_DICT, proc_
 	return proc_is_whitelisted
 
 
+def ip_does_match_iprange(ip, iprange):
+	if ipaddress.IPv4Address(ip) in ipaddress.IPv4Network(iprange):
+		return True
+	else:
+		return False
 
 
-		# elif of.startswith('/etc'):
-		# 	alert(2, 'process has open file in /etc, of=%s' % (of), proc_variables)
-		# else:
-		# 	pass
+def port_does_match_portrange(port, portrange):
+	port = int(port)
 
+	if '-' in portrange:
+		x, y = portrange.split('-')
+		x = int(x)
+		y = int(y)
 
+		assert x > 0 and x < 65536, 'port value %i outside range 1-65535' % (x)
+		assert y > 0 and y < 65536, 'port value %i outside range 1-65535' % (y)
+		assert not (x > y), 'port %i cant be larger than port %i' % (x, y)
+
+	else:
+		if port == int(portrange):
+			return True
+		else:
+			return False
+
+# print(ip_does_match_iprange(sys.argv[1], sys.argv[2]))
+# try:
+# 	print(port_does_match_portrange(sys.argv[3], sys.argv[4]))
+# except Exception as e:
+# 	print(type(e))
+# 	print(e)
 
 if __name__ == '__main__':
 	main()
