@@ -396,12 +396,12 @@ def check_process_ok(pid, proc_variables, open_files, whitelisting_config, proc_
 			break
 
 	if proc_is_whitelisted:
-		proc_is_whitelisted = check_process_open_files(pid, proc_variables, open_files, EXTRAS_DICT, proc_net_maps)
+		proc_is_whitelisted = check_process_open_files(pid, proc_variables, open_files, EXTRAS_DICT, where, proc_net_maps)
 
 	return proc_is_whitelisted
 
 
-def check_process_open_files(pid, proc_variables, open_files, EXTRAS_DICT, proc_net_maps):
+def check_process_open_files(pid, proc_variables, open_files, EXTRAS_DICT, where, proc_net_maps):
 	proc_is_whitelisted = True
 
 	all_listening_nonlocalhost_tcp4_ports = proc_net_maps['tcp4']['all_listening_nonlocalhost_ports']
@@ -428,10 +428,18 @@ def check_process_open_files(pid, proc_variables, open_files, EXTRAS_DICT, proc_
 				else:
 					if file['state'] == TCP_STATE_LISTEN:
 						if 'NET_LISTEN' in list(EXTRAS_DICT.keys()):
-							for ip, port in EXTRAS_DICT['NET_LISTEN']:
-								if port == file['local_port']:
+							for ip, port_range in EXTRAS_DICT['NET_LISTEN']:
+								if ip != '*':
+									if ip != file['local_ip4']:
+										continue
+								try:
+									port_does_match_portrange(file['local_port'], port_range)
+									print('ok file', file)
 									file_ok = True
 									break
+								except ValueError as e:
+									alert(-1, 'error in %s with port definition %s' % (where, port_range))
+									sys.exit(42)
 
 						if not file_ok:
 							alert(1, 'process %s listens on non-localhost port %s' % (proc_variables['comm'], file['local_port']), proc_variables)
@@ -470,6 +478,7 @@ def ip_does_match_iprange(ip, iprange):
 
 def port_does_match_portrange(port, portrange):
 	port = int(port)
+	print('check portrange %s' % (portrange))
 
 	if '-' in portrange:
 		x, y = portrange.split('-')
