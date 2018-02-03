@@ -286,7 +286,7 @@ def get_process_open_files(pid, proc_net_maps):
 		...
 
 		An IP socket contains [protocol, state, local_ip4, local_port, remote_ip4, remote_port]
-		A regular file contains ['regular', filename]
+		A regular file contains [filename]
 
 	'''
 
