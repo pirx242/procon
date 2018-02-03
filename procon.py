@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
-import os, pwd, time, sys
+import os, pwd, time, sys, string
 from optparse import OptionParser
 
 IPv4_LOCALHOST = '0100007F'
+IPv4_ALLHOST = '00000000'
 
 TCP_STATE_LISTEN = '0A'
 TCP_STATE_ESTABLISHED = '01'
@@ -23,8 +24,9 @@ TCP_STATE_ESTABLISHED = '01'
 
 parser = OptionParser()
 parser.add_option('-v', action='store_true', dest='verbose', default=False, help = 'verbose')
-parser.add_option('-p', action='append', type=str, dest='proc_files', default=[], help = 'conf file with process whitelisting (can be repeated)')
-parser.add_option('-a', action='store', type=int, dest='bin_age', default=[], help = 'min age of running binaries (hours)')
+parser.add_option('-g', action='store_true', dest='generate', default=False, help = 'generate allow lines')
+parser.add_option('-a', action='append', type=str, dest='allow_files', default=[], help = 'allow conf file with process whitelisting (can be repeated)')
+parser.add_option('-b', action='store', type=int, dest='bin_age', default=[], help = 'min age of running binaries (hours)')
 (opts, args) = parser.parse_args(sys.argv[1:])
 
 if os.getuid() != 0:
@@ -67,7 +69,7 @@ def parse_procs_conf():
 
 	# read conf from conf files
 	proc_whitelist_lines = []
-	for f in opts.proc_files:
+	for f in opts.allow_files:
 		i = 0
 		for line in open(f).readlines():
 			i += 1
@@ -161,6 +163,8 @@ def main():
 	procs_skipped = []
 	procs_kernel  = []
 
+	generated_allow_lines = []
+
 	# try:
 	whitelisting_config = parse_procs_conf()
 	# except Exception, e:
@@ -196,6 +200,9 @@ def main():
 		if not check_process_ok(pid, v, ofs, whitelisting_config, proc_net_maps):
 			print(pid, 'nok')
 			procs_invalid.append(pid)
+
+			if opts.generate:
+				generated_allow_lines.append( generate(pid, v, ofs, proc_net_maps) )
 		else:
 			print(pid, 'ok')
 
@@ -205,11 +212,55 @@ def main():
 	print('invalid', procs_invalid)
 	print('kernel', procs_kernel)
 
+	if opts.generate:
+		print('****************************** GENERATED ******************************')
+		for gal in generated_allow_lines:
+			print(gal)
+
 	if procs_invalid:
 		sys.exit(2)
 	else:
 		sys.exit(0)
 
+
+def generate(pid, variables, open_files, proc_net_maps):
+	allow_variables = ['exe', 'comm', 'cmdline']
+
+	if int(variables['uid']) < 1000:
+		allow_variables.insert(0, 'user')
+	else:
+		allow_variables.insert(0, 'uid')
+
+	avv = [ variables[av] for av in allow_variables ]
+	# allow variable values
+
+	allow_line = '_'.join( [ i.upper() for i in allow_variables ] )
+	allow_line += '\t' + '\t'.join(avv)
+
+	all_listening_nonlocalhost_tcp4_ports = proc_net_maps['tcp4']['all_listening_nonlocalhost_ports']
+
+	for file_type in list(open_files.keys()):
+		if file_type == 'regular':
+			for file in open_files['regular']:
+				if file.startswith('/etc'):
+					allow_line += '\tFS_ETC_OK=%s' % (file)
+		else:
+			for file in open_files[file_type]:
+				if file['state'] == TCP_STATE_LISTEN:
+					if file['local_ip4'] == IPv4_ALLHOST:
+						ip = '*'
+					else:
+						ip = hexip4_to_ip4(file['local_ip4'])
+					allow_line += '\tNET_LISTEN=%s:%s' % (ip, file['local_port'])
+
+				elif file['state'] == TCP_STATE_ESTABLISHED:
+					if file['local_port'] in all_listening_nonlocalhost_tcp4_ports:
+						#incoming connection
+						pass
+					else:
+						allow_line += '\tNET_CON_OUT=%s:%s' % (hexip4_to_ip4(file['remote_ip4']), file['remote_port'])
+
+	return allow_line
 
 def get_process_variables(pid):
 	pid_dir = os.path.join('/proc', pid) + os.sep
