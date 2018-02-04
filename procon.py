@@ -9,6 +9,8 @@ IPv4_ALLHOST = '00000000'
 TCP_STATE_LISTEN = '0A'
 TCP_STATE_ESTABLISHED = '01'
 
+MAX_CMDLINE_LENGTH = 80
+
 # include/net/tcp_states.h
 # TCP_ESTABLISHED = 1,	01
 # TCP_SYN_SENT,			02
@@ -25,7 +27,7 @@ TCP_STATE_ESTABLISHED = '01'
 parser = OptionParser()
 parser.add_option('-v', action='store_true', dest='verbose', default=False, help = 'verbose')
 parser.add_option('-g', action='store_true', dest='generate', default=False, help = 'generate allow lines')
-parser.add_option('-a', action='append', type=str, dest='allow_files', default=[], help = 'allow conf file with process whitelisting (can be repeated)')
+parser.add_option('-a', action='append', type=str, dest='allow_files', default=[], help = 'allow rconf file with process whitelisting (can be repeated)')
 parser.add_option('-b', action='store', type=int, dest='bin_age', default=[], help = 'min age of running binaries (hours)')
 (opts, args) = parser.parse_args(sys.argv[1:])
 
@@ -181,18 +183,14 @@ def main():
 	for pid in PIDS:
 		print()
 		print('checking pid', pid)
-		#try:
+
 		v = get_process_variables(pid)
 		if not v:
 			procs_skipped.append(pid)
 			continue
-			
+
 		ofs = get_process_open_files(pid, proc_net_maps)
 		print(v['comm'])
-		#except Exception as e:
-		#	alert(0, e, None)
-		#	procs_skipped.append(pid)
-		#	continue
 
 		if proc_is_kernel(v):
 			print('pid is kernel', pid)
@@ -222,21 +220,22 @@ def main():
 			print(gal)
 
 	if procs_invalid:
-		sys.exit(2)
+		sys.exit(11)
 	else:
 		sys.exit(0)
 
 
 def generate(pid, variables, open_files, proc_net_maps):
-	allow_variables = ['exe', 'comm', 'cmdline']
-
 	if int(variables['uid']) < 1000:
-		allow_variables.insert(0, 'user')
+		allow_variables = ['user', 'exe', 'comm', 'cmdline']
 	else:
-		allow_variables.insert(0, 'uid')
+		allow_variables = ['uid', 'exe', 'comm', 'cmdline']
 
-	avv = [ variables[av] for av in allow_variables ]
 	# allow variable values
+	avv = [ variables[av] for av in allow_variables ]
+
+	if allow_variables[0] == 'uid':
+		avv[0] = '>999'
 
 	allow_line = '_'.join( [ i.upper() for i in allow_variables ] )
 	allow_line += '\t' + '\t'.join(avv)
@@ -247,7 +246,7 @@ def generate(pid, variables, open_files, proc_net_maps):
 		if file_type == 'regular':
 			for file in open_files['regular']:
 				if file.startswith('/etc'):
-					allow_line += '\tFS_ETC_OK=%s' % (file)
+					allow_line += '\tFS_FILE_OK=%s' % (file)
 		else:
 			for file in open_files[file_type]:
 				if file['state'] == TCP_STATE_LISTEN:
@@ -320,8 +319,15 @@ def get_process_variables(pid):
 
 	# procs command line
 	cmdline = open(pid_dir + 'cmdline').read()
-	cmdline = cmdline.replace(' ', '')
-	cmdline = cmdline.replace(chr(0), '').strip()[:80]
+	cmdline = cmdline.replace(chr(0), ' ')
+	cmdline = cmdline.strip()
+	cmdline_parts = cmdline.split()
+	i = cmdline_parts[0].rfind('/')
+	if i >= 0:
+		cmdline_parts[0] = cmdline_parts[0][i+1:]
+		cmdline = ' '.join(cmdline_parts)
+	cmdline = cmdline.replace(' ', '^')
+	cmdline = cmdline[:MAX_CMDLINE_LENGTH]
 
 	runtime = (NOW_EPOCH - os.stat(pid_dir + 'cmdline').st_mtime) / 3600.0
 
