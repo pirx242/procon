@@ -181,14 +181,18 @@ def main():
 	for pid in PIDS:
 		print()
 		print('checking pid', pid)
-		try:
-			v = get_process_variables(pid)
-			ofs = get_process_open_files(pid, proc_net_maps)
-			print(v['comm'])
-		except Exception as e:
-			alert(0, e, None)
+		#try:
+		v = get_process_variables(pid)
+		if not v:
 			procs_skipped.append(pid)
 			continue
+			
+		ofs = get_process_open_files(pid, proc_net_maps)
+		print(v['comm'])
+		#except Exception as e:
+		#	alert(0, e, None)
+		#	procs_skipped.append(pid)
+		#	continue
 
 		if proc_is_kernel(v):
 			print('pid is kernel', pid)
@@ -266,7 +270,10 @@ def get_process_variables(pid):
 	pid_dir = os.path.join('/proc', pid) + os.sep
 	exe = None
 
-	uid = str(os.stat(pid_dir).st_uid)
+	try:
+		uid = str(os.stat(pid_dir).st_uid)
+	except FileNotFoundError:
+		return None
 
 	# procs exe file
 	exeage = 0.0
