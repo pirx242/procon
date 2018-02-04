@@ -1,3 +1,4 @@
 in progress
 
 * generate()
+	måste nog ha en cmdline_real också, som kan jämföras med om whitelist-raden anger /full/path eller ../relative/path
