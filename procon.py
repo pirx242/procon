@@ -335,10 +335,10 @@ def get_process_variables(pid):
 
 		cmdline = cmdline.replace(' ', '^')
 		cmdline = cmdline[:MAX_CMDLINE_LENGTH]
-		cmdline_short = cmdline.replace(' ', '^')
-		cmdline_short = cmdline[:MAX_CMDLINE_LENGTH]
+		cmdline_short = cmdline_short.replace(' ', '^')
+		cmdline_short = cmdline_short[:MAX_CMDLINE_LENGTH]
 
-		del cmdline_parts
+		del cmdline_parts, i
 
 	runtime = (NOW_EPOCH - os.stat(pid_dir + 'cmdline').st_mtime) / 3600.0
 
