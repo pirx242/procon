@@ -319,15 +319,23 @@ def get_process_variables(pid):
 
 	# procs command line
 	cmdline = open(pid_dir + 'cmdline').read()
-	cmdline = cmdline.replace(chr(0), ' ')
-	cmdline = cmdline.strip()
-	cmdline_parts = cmdline.split()
-	i = cmdline_parts[0].rfind('/')
-	if i >= 0:
-		cmdline_parts[0] = cmdline_parts[0][i+1:]
-		cmdline = ' '.join(cmdline_parts)
-	cmdline = cmdline.replace(' ', '^')
-	cmdline = cmdline[:MAX_CMDLINE_LENGTH]
+	if cmdline:
+		cmdline = cmdline.replace(chr(0), ' ')
+		cmdline = cmdline.strip()
+		cmdline_parts = cmdline.split()
+		i = cmdline_parts[0].rfind('/')
+		if i >= 0:
+			cmdline_parts[0] = cmdline_parts[0][i+1:]
+			cmdline_short = ' '.join(cmdline_parts)
+		else:
+			cmdline_short = cmdline
+
+		cmdline = cmdline.replace(' ', '^')
+		cmdline = cmdline[:MAX_CMDLINE_LENGTH]
+		cmdline_short = cmdline.replace(' ', '^')
+		cmdline_short = cmdline[:MAX_CMDLINE_LENGTH]
+
+		del cmdline_parts
 
 	runtime = (NOW_EPOCH - os.stat(pid_dir + 'cmdline').st_mtime) / 3600.0
 
@@ -407,11 +415,20 @@ def check_process_ok(pid, proc_variables, open_files, whitelisting_config, proc_
 		proc_is_whitelisted = True
 		for vr, vl in zip(VARS, VALS):
 			
-			if vr in ['exe', 'cmdline'] and vl.endswith('>'):
-				vl = vl[:-1]
-				if not proc_variables[vr].startswith(vl):
-					proc_is_whitelisted = False
-					break
+			if vr in ['exe', 'cmdline']:
+				if vr == 'cmdline' and vl[0] not in ['.', '/']:
+					vr = 'cmdline_short'
+				if vl.endswith('>'):
+					vl = vl[:-1]
+					if not proc_variables[vr].startswith(vl):
+						print('a')
+						proc_is_whitelisted = False
+						break
+				else:
+					if proc_variables[vr] != vl:
+						print('b', vr, proc_variables[vr], vl)
+						proc_is_whitelisted = False
+						break
 			elif vr == 'pid':
 				if vl[0] == '<':
 					if int(proc_variables[vr]) < int(vl[1:]):
