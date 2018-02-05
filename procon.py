@@ -157,7 +157,10 @@ ME = [MY_PID, MY_PPID]
 
 # fetch all running process PIDs, as strings
 PIDS = [pid for pid in os.listdir('/proc') if pid.isdigit() and pid not in ME]
-PIDS = args
+
+if args:
+	PIDS = args
+
 
 def main():
 	procs_invalid = []
