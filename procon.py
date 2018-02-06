@@ -11,6 +11,9 @@ TCP_STATE_ESTABLISHED = '01'
 
 MAX_CMDLINE_LENGTH = 80
 
+NOW_EPOCH = time.time()
+
+
 # include/net/tcp_states.h
 # TCP_ESTABLISHED = 1,	01
 # TCP_SYN_SENT,			02
@@ -31,33 +34,71 @@ parser.add_option('-a', action='append', type=str, dest='allow_files', default=[
 parser.add_option('-b', action='store', type=int, dest='bin_age', default=[], help = 'min age of running binaries (hours)')
 (opts, args) = parser.parse_args(sys.argv[1:])
 
-if os.getuid() != 0:
-	print('Must run as root!')
-	sys.exit(1)
+
+def assert_power():
+	"""Summary: exit if not root
+	"""
+	if os.getuid() != 0:
+		print('Must run as root!')
+		sys.exit(11)
+
+
+def get_pids():
+	"""Summary: return running pids, or pids that were explicitly specified by the user.
+	
+	Returns:
+	    list:	list of pids (strings looking like ints)
+	"""
+	my_pid = str(os.getpid())
+	my_ppid = str(os.getppid())
+	#my_pppid = [line.split()[1] for line in open('/proc/'+my_ppid+'/status').readlines() if line.startswith('ppid:') ][0]
+
+	me = [my_pid, my_ppid]
+	#me = []	#todo rm
+
+	# fetch all running process pids, as strings
+	pids = [pid for pid in os.listdir('/proc') if pid.isdigit() and pid not in me]
+
+	if args:
+		pids = args
+
+	return pids
+
 
 def alert(severity, alert_string, variables):
+	"""Summary: prints out alerts about stuff that may or may not cause exitvalue!=0
+	
+	Args:
+	    severity (int):			0=warning 1=critical
+	    alert_string (str):		Your message
+	    variables (dict):		Optional, may be None. Tries to pretty print these. These are most likely process variables.
+	
+	Returns:
+	    None
+	"""
 	if severity == 0:
-		SEV = 'INFORMATIONAL'
+		SEV = 'WARNING'
 	elif severity == 1:
 		SEV = 'CRITICAL'
-	elif severity == 2:
-		SEV = 'WARNING'
 	else:
 		SEV = 'WHAT'
 
-	if not severity and not opts.verbose:
-		return
-
-	try:
-		print('%s(%s) uid:%s user:%s pid:%s exe:%s comm:%s cmdline:%s runtime:%.2fh exeage:%.2fh' % (SEV, alert_string, variables['uid'], variables['user'], variables['pid'], variables['exe'], variables['comm'], variables['cmdline'], variables['runtime'], variables['exeage']))
-	except:
-		if variables:
+	if variables:
+		try:
+			print('%s(%s) uid:%s user:%s pid:%s exe:%s comm:%s cmdline:%s runtime:%.2fh exeage:%.2fh' % (SEV, alert_string, variables['uid'], variables['user'], variables['pid'], variables['exe'], variables['comm'], variables['cmdline'], variables['runtime'], variables['exeage']))
+		except:
 			print('%s(%s) %s' % (SEV, alert_string, variables))
-		else:
-			print('%s! %s' % (SEV, alert_string))
+	else:
+		print('%s! %s' % (SEV, alert_string))
 
 
 def print_verbose(msg, *rest):
+	"""Summary: print message to user only when -v is used
+	
+	Args:
+	    msg (str):	message
+	    *rest:		optional rest, like e.g. a dict, or array or whatever
+	"""
 	if opts.verbose:
 		if not msg:
 			print()
@@ -66,7 +107,17 @@ def print_verbose(msg, *rest):
 		else:
 			print('VERBOSE:', msg)
 
+
 def parse_procs_conf():
+	"""Summary
+	
+	Returns:
+	    TYPE: Description
+	
+	Raises:
+	    e: Description
+	    Exception: Description
+	"""
 	tmp_var_vals = []
 
 	# read conf from conf files
@@ -146,23 +197,12 @@ def get_all_listening_nonlocalhost_ip4_ports(proc_net_map):
 	return [ str(int(parts[1][9:], 16)) for inode, parts in list(proc_net_map.items()) if parts[3] == TCP_STATE_LISTEN and parts[1][:8] != IPv4_LOCALHOST]
 
 
-NOW_EPOCH = time.time()
 
-MY_PID = str(os.getpid())
-MY_PPID = str(os.getppid())
-#MY_PPPID = [line.split()[1] for line in open('/proc/'+MY_PPID+'/status').readlines() if line.startswith('PPid:') ][0]
-
-ME = [MY_PID, MY_PPID]
-#ME = []	#TODO RM
-
-# fetch all running process PIDs, as strings
-PIDS = [pid for pid in os.listdir('/proc') if pid.isdigit() and pid not in ME]
-
-if args:
-	PIDS = args
 
 
 def main():
+	assert_power()
+
 	procs_invalid = []
 	procs_checked = []
 	procs_skipped = []
@@ -183,7 +223,9 @@ def main():
 	proc_net_maps['tcp4']['all_listening_nonlocalhost_ports'] = all_listening_nonlocalhost_tcp4_ports
 	proc_net_maps['udp4']['all_listening_nonlocalhost_ports'] = all_listening_nonlocalhost_udp4_ports
 
-	for pid in PIDS:
+	pids = get_pids()
+
+	for pid in pids:
 		print()
 		print('checking pid', pid)
 
