@@ -40,7 +40,7 @@ def assert_power():
 	"""
 	if os.getuid() != 0:
 		print('Must run as root!')
-		sys.exit(11)
+		sys.exit(1)
 
 
 def get_pids():
@@ -108,11 +108,14 @@ def print_verbose(msg, *rest):
 			print('VERBOSE:', msg)
 
 
-def parse_procs_conf():
+def parse_procs_conf(allow_files):
 	"""Summary
 	
+	Args:
+	    allow_files (list): list of cfg files
+	
 	Returns:
-	    TYPE: Description
+	    list: list of whitelisting lines, looking like this [VARS, VALS, EXTRAS_DICT, where, line, hits(0)]
 	
 	Raises:
 	    e: Description
@@ -121,30 +124,32 @@ def parse_procs_conf():
 	tmp_var_vals = []
 
 	# read conf from conf files
+	# save a tuple for each row, containing (file:row, line)
+	# purging of comments happen here
 	proc_whitelist_lines = []
-	for f in opts.allow_files:
+	for f in allow_files:
 		i = 0
 		for line in open(f).readlines():
 			i += 1
-			line = line.strip()
+			line = line.rstrip()
+			j = line.find('#')
+			if j >= 0:
+				line = line[:j]
+			line = line.rstrip()
 			if not line or line.startswith('#'):
 				continue
-			proc_whitelist_lines.append(['%s:%i' % (f, i), line])
+			proc_whitelist_lines.append(('%s:%i' % (f, i), line))
 
 	# parse conf into whitelisting array
 	PROC_WHITELIST_LINES_EXPLODED = []
 	for where, line in proc_whitelist_lines:
-		i = line.find('#')
-		if i >= 0:
-			line = line[:i]
 		tmp = [col for col in line.split() if col]
 		VARS = tmp[0].lower().split('_')
 		nr_vars = len(VARS)
 		VALS = tmp[1:nr_vars+1]
 
 		if len(VALS) != nr_vars:
-			alert(1, 'Skipping invalid cfg line! %s: %s' % (where, line), {})
-			continue
+			raise Exception('nr-vars != nr-vals in %s: %s' % (where, line))
 
 		if (VARS, VALS) in tmp_var_vals:
 			raise Exception('line duplicate %s: %s' % (where, line))
@@ -155,8 +160,7 @@ def parse_procs_conf():
 			try:
 				var, val = extra.split('=')
 			except Exception as e:
-				alert(1, 'error parsing extra values at %s: %s' % (where, line), None)
-				raise e
+				raise Exception('error parsing extra values at %s: %s' % (where, line))
 
 			if var in list(EXTRAS_DICT.keys()):
 				EXTRAS_DICT[var].append(val.split(':'))
@@ -167,14 +171,29 @@ def parse_procs_conf():
 
 	return PROC_WHITELIST_LINES_EXPLODED
 
+
 def hexip4_to_ip4(hex_ip):
+	"""Summary: make printable the ip stuff in /proc/net/tcp etc
+	
+	Args:
+	    hex_ip (str): an ip string like this 0100007F
+	
+	Returns:
+	    str: a dotted decimal ip string like this 127.0.0.1
+	"""
 	r = str(int(hex_ip[6:8], 16))
 	r += '.' + str(int(hex_ip[4:6], 16))
 	r += '.' + str(int(hex_ip[2:4], 16))
 	r += '.' + str(int(hex_ip[0:2], 16))
 	return r
 
+
 def get_proc_net_maps():
+	"""Summary: return a dict of dicts, containing info about global network connections
+	
+	Returns:
+	    dict of dicts: Like {'tcp4': {'100721': [con, parts, ...]}, 'udp4': {...} }
+	"""
 	r = {}
 
 	proc_net_tcp4 = [ line.split() for line in open('/proc/net/tcp').readlines() if line.strip()[:2] != 'sl']
@@ -193,28 +212,34 @@ def get_proc_net_maps():
 
 	return r
 
+
 def get_all_listening_nonlocalhost_ip4_ports(proc_net_map):
+	"""Summary: get list of all listening hosts, that listen publicly (non-localhost)
+	
+	Args:
+	    proc_net_map (dict): Description
+	
+	Returns:
+	    list: like ['22', '443', ...]
+	"""
 	return [ str(int(parts[1][9:], 16)) for inode, parts in list(proc_net_map.items()) if parts[3] == TCP_STATE_LISTEN and parts[1][:8] != IPv4_LOCALHOST]
-
-
-
 
 
 def main():
 	assert_power()
 
 	procs_invalid = []
-	procs_checked = []
+	procs_approved = []
 	procs_skipped = []
 	procs_kernel  = []
 
 	generated_allow_lines = []
 
-	# try:
-	whitelisting_config = parse_procs_conf()
-	# except Exception, e:
-	# 	alert(1, 'Error parsing conf. %s' % (e), None)
-	# 	sys.exit(42)
+	try:
+		whitelisting_config = parse_procs_conf(opts.allow_files)
+	except Exception as e:
+		alert(1, 'Error parsing conf. %s' % (e), None)
+		sys.exit(2)
 
 	proc_net_maps = get_proc_net_maps()
 
@@ -242,7 +267,7 @@ def main():
 			procs_kernel.append(pid)
 			continue
 
-		procs_checked.append(pid)
+		procs_approved.append(pid)
 
 		if not check_process_ok(pid, v, ofs, whitelisting_config, proc_net_maps):
 			print(pid, 'nok')
@@ -254,7 +279,7 @@ def main():
 			print(pid, 'ok')
 
 	print()
-	print('checked', procs_checked)
+	print('approved', procs_approved)
 	print('skipped', procs_skipped)
 	print('invalid', procs_invalid)
 	print('kernel', procs_kernel)
